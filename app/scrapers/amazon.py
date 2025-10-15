@@ -11,6 +11,7 @@ from app.utils.helpers import (
     extract_rating, extract_reviews_count, format_seller_info
 )
 from app.models.product import ProductData
+from app.config.country_configs import get_country_config, get_language_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -22,39 +23,45 @@ class AmazonScraper(BaseScraper):
         """构建亚马逊URL（用于测试）"""
         return build_amazon_url(asin, country)
     
-    def _get_us_delivery_cookies(self) -> dict:
-        """获取美国配送地址的Cookie设置"""
-        return {
-            # 用户提供的实际Cookie（设置配送地址后）
+    def _get_delivery_cookies(self, country: str) -> dict:
+        """获取配送地址的Cookie设置（多国家支持）"""
+        config = get_country_config(country)
+        if not config:
+            logger.warning(f"No configuration found for country: {country}")
+            return {}
+        
+        # 基础Cookie（所有国家通用）
+        base_cookies = {
             'csm-sid': '188-7218408-5122545',
             'x-amz-captcha-1': '1759756555861058',
             'x-amz-captcha-2': 'SwMkhNffoM7GcVf8ab2LjQ==',
             'session-id': '144-8192884-2975745',
             'session-id-time': '2082787201l',
-            'i18n-prefs': 'USD',
-            'lc-main': 'en_US',
             'ubid-main': '130-4907599-8762048',
             'rx': 'AQA/oeOb8EMx2RSBn1avtS3swag=@AVYw52g=',
             'csm-hit': 'tb:XYM8HCYTT32TW9JX9WRW+s-AG1AVFRXAQ1MDA3MMME3|1760012163830&t:1760012163830&adb:adblk_no',
             'rxc': 'AC3VckgEzA43i/LZdU4',
-            # 美国配送地址Cookie
-            'aws-target-data': '{"countryOfResidence":"US","region":"NY","city":"New York","postalCode":"10001","countryCode":"US"}',
-            'aws-target-address': '{"countryOfResidence":"US","region":"NY","city":"New York","postalCode":"10001","countryCode":"US"}',
-            'aws-target-location': '{"countryOfResidence":"US","region":"NY","city":"New York","postalCode":"10001","countryCode":"US"}',
-            'aws-target-delivery': '{"countryOfResidence":"US","region":"NY","city":"New York","postalCode":"10001","countryCode":"US"}',
-            'aws-target-locale': 'en-US',
-            'aws-target-currency': 'USD',
-            'aws-target-timezone': 'America/New_York',
-            'aws-target-country': 'US',
-            'aws-target-region': 'NY',
-            'aws-target-city': 'New York',
-            'aws-target-postal': '10001',
-            'aws-target-zip': '10001',
-            'aws-target-state': 'NY',
-            'aws-target-city-state': 'New York, NY',
-            'aws-target-postal-code': '10001',
-            'aws-target-zip-code': '10001'
         }
+        
+        # 合并国家特定Cookie
+        cookies = {**base_cookies, **config.delivery_cookies}
+        
+        # 添加额外的国家特定Cookie
+        cookies.update({
+            'aws-target-timezone': config.timezone,
+            'aws-target-country': config.country_code,
+            'aws-target-region': config.region,
+            'aws-target-city': config.city,
+            'aws-target-postal': config.postal_code,
+            'aws-target-zip': config.postal_code,
+            'aws-target-state': config.region,
+            'aws-target-city-state': f"{config.city}, {config.region}",
+            'aws-target-postal-code': config.postal_code,
+            'aws-target-zip-code': config.postal_code,
+        })
+        
+        logger.info(f"Generated delivery cookies for {country}: {len(cookies)} cookies")
+        return cookies
     
     async def scrape_product(self, asin: str, country: str) -> Dict[str, Any]:
         """
@@ -89,16 +96,19 @@ class AmazonScraper(BaseScraper):
         """
         第一阶段：爬取商品页面
         """
-        # 为美国设置配送地址Cookie
-        if country == "US":
-            us_cookies = self._get_us_delivery_cookies()
-            content = await self.fetch_page(url, cookies=us_cookies)
+        # 为相应国家设置配送地址Cookie
+        cookies = self._get_delivery_cookies(country)
+        if cookies:
+            content = await self.fetch_page(url, cookies=cookies)
         else:
             content = await self.fetch_with_delay(url)
         if not content:
             raise Exception("Failed to fetch product page")
         
         soup = BeautifulSoup(content, 'html.parser')
+        
+        # 将国家参数传递给后续方法
+        self._current_country = country
         
         # 添加调试信息
         logger.info(f"Page content length: {len(content)}")
@@ -160,7 +170,7 @@ class AmazonScraper(BaseScraper):
             product_data['cart_status'] = self._extract_cart_status(soup)
             
             # 6. 发货方式
-            product_data['shipping_method'] = self._extract_shipping_method(soup)
+            product_data['shipping_method'] = self._extract_shipping_method(soup, country)
             
             # 7. 卖家名称和URL
             seller_name, seller_url = self._extract_seller_info(soup)
@@ -514,7 +524,8 @@ class AmazonScraper(BaseScraper):
                 logger.info(f"Found discount rate from green background element: {rate}")
                 if rate not in discount_rates:
                     discount_rates.append(rate)
-            
+                continue
+                
             # 查找英文 "X% off" 格式
             off_match = re.search(r'(\d+)%\s+off', text)
             if off_match:
@@ -522,7 +533,8 @@ class AmazonScraper(BaseScraper):
                 logger.info(f"Found discount rate from green background element: {rate}")
                 if rate not in discount_rates:
                     discount_rates.append(rate)
-            
+                continue
+        
             # 查找西班牙语 "cuando compres $X" 格式
             compres_match = re.search(r'cuando compres\s+\$(\d+)', text)
             if compres_match:
@@ -592,6 +604,15 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Added 'Ahorra' from promo div to discount_rates: {rate}, current list: {discount_rates}")
                 else:
                     logger.info(f"'Ahorra' rate from promo div already in discount_rates: {rate}")
+        
+        # 方法3：查找绿色背景文本包含折扣关键词（多语言支持）
+        discount_keywords = [
+            # 英文
+            'save', 'off', 'discount', 'savings',
+            # 西班牙语
+            'cuando compres', 'descuento', 'ahorro', 'ahorros', 'hasta'
+        ]
+        
         for keyword in discount_keywords:
             elements = soup.find_all(text=lambda text: text and keyword in text.lower())
             logger.info(f"Found {len(elements)} elements containing '{keyword}'")
@@ -617,8 +638,8 @@ class AmazonScraper(BaseScraper):
                         if off_match:
                             rate = f"{off_match.group(1)}%"
                             logger.info(f"Found discount rate from green background '{keyword}' text: {rate}")
-                            if rate not in discount_rates:
-                                discount_rates.append(rate)
+                    if rate not in discount_rates:
+                        discount_rates.append(rate)
         
         # 返回所有找到的折扣率
         logger.info(f"Final discount_rates list: {discount_rates}")
@@ -635,19 +656,17 @@ class AmazonScraper(BaseScraper):
             logger.info("No discount rate found")
             return None
     
-    def _is_cart_button_text(self, text: str) -> bool:
+    def _is_cart_button_text(self, text: str, country: str = "US") -> bool:
         """检查文本是否包含购物车按钮相关的关键词（多语言支持）"""
         if not text:
             return False
         
         text_lower = text.lower()
-        cart_keywords = [
-            # 英文
-            'add to cart', 'add to basket', 'add to bag',
-            # 西班牙语
-            'agregar al carrito', 'añadir al carrito', 'agregar a la cesta',
-            # 其他语言可以继续添加
-        ]
+        cart_keywords = get_language_keywords(country, 'cart')
+        
+        # 如果没有找到国家特定关键词，使用默认的英文关键词
+        if not cart_keywords:
+            cart_keywords = ['add to cart', 'add to basket', 'add to bag']
         
         return any(keyword in text_lower for keyword in cart_keywords)
     
@@ -742,23 +761,21 @@ class AmazonScraper(BaseScraper):
         logger.info("No clear cart indicators found, defaulting to false")
         return "false"
     
-    def _is_shipping_text(self, text: str) -> bool:
+    def _is_shipping_text(self, text: str, country: str = "US") -> bool:
         """检查文本是否包含配送相关的关键词（多语言支持）"""
         if not text:
             return False
         
         text_lower = text.lower()
-        shipping_keywords = [
-            # 英文
-            'ships from', 'fulfilled by', 'shipped by',
-            # 西班牙语
-            'envío desde', 'cumplido por', 'enviado por',
-            # 其他语言可以继续添加
-        ]
+        shipping_keywords = get_language_keywords(country, 'shipping')
+        
+        # 如果没有找到国家特定关键词，使用默认的英文关键词
+        if not shipping_keywords:
+            shipping_keywords = ['ships from', 'fulfilled by', 'shipped by']
         
         return any(keyword in text_lower for keyword in shipping_keywords)
     
-    def _extract_shipping_method(self, soup: BeautifulSoup) -> Optional[str]:
+    def _extract_shipping_method(self, soup: BeautifulSoup, country: str = "US") -> Optional[str]:
         """提取发货方式"""
         logger.info("Searching for shipping method...")
         
@@ -784,7 +801,7 @@ class AmazonScraper(BaseScraper):
             logger.info("No fulfill divs found, trying alternative selectors...")
             
             # 尝试查找包含配送相关文本的其他元素（多语言支持）
-            ships_from_elements = soup.find_all(text=lambda text: text and self._is_shipping_text(text))
+            ships_from_elements = soup.find_all(text=lambda text: text and self._is_shipping_text(text, country))
             logger.info(f"Found {len(ships_from_elements)} elements containing shipping text")
             
             # 尝试查找包含 "Fulfilled by" 文本的元素
@@ -966,10 +983,10 @@ class AmazonScraper(BaseScraper):
             # 调试：查看页面上是否有类似的卖家相关元素
             if not seller_name:
                 logger.info("Debugging: checking all seller-related elements...")
-                seller_elements = soup.select('a[href*="seller"], [id*="seller"], [class*="seller"]')
-                logger.info(f"Found {len(seller_elements)} seller-related elements")
-                for i, elem in enumerate(seller_elements[:10]):  # 显示前10个
-                    logger.info(f"Seller element {i+1}: {elem.name} - {elem.get('id', 'no-id')} - {elem.get('class', 'no-class')} - {elem.get('href', 'no-href')[:100]}")
+            seller_elements = soup.select('a[href*="seller"], [id*="seller"], [class*="seller"]')
+            logger.info(f"Found {len(seller_elements)} seller-related elements")
+            for i, elem in enumerate(seller_elements[:10]):  # 显示前10个
+                logger.info(f"Seller element {i+1}: {elem.name} - {elem.get('id', 'no-id')} - {elem.get('class', 'no-class')} - {elem.get('href', 'no-href')[:100]}")
                 
                 # 尝试查找包含商家名称的span元素
                 seller_spans = soup.select('span.offer-display-feature-text-message')
@@ -1260,6 +1277,7 @@ class AmazonScraper(BaseScraper):
     
     def _extract_category_and_rank(self, soup: BeautifulSoup) -> dict:
         """提取类目和类目排名信息"""
+        logger.info("Starting category and rank extraction...")
         result = {
             'category': None,
             'rank': None,
@@ -1270,6 +1288,7 @@ class AmazonScraper(BaseScraper):
         # 类目和排名必须成对出现，不能单独提取
         best_sellers_rank = self._extract_best_sellers_rank(soup)
         if best_sellers_rank:
+            logger.info(f"Found best sellers rank: {best_sellers_rank}")
             result['category'] = best_sellers_rank['categories']
             result['rank'] = best_sellers_rank['ranks']
             result['structured_ranks'] = best_sellers_rank['structured_ranks']
@@ -1277,31 +1296,37 @@ class AmazonScraper(BaseScraper):
         
         # 如果没有找到Best Sellers Rank，返回空结果
         # 不尝试从面包屑导航提取，因为那不是真正的类目排名信息
+        logger.info("No best sellers rank found")
         return result
 
-    def _is_rank_text(self, text: str) -> bool:
+    def _is_rank_text(self, text: str, country: str = "US") -> bool:
         """检查文本是否包含排名相关的关键词（多语言支持）"""
         if not text:
             return False
         
         text_lower = text.lower()
-        rank_keywords = [
-            # 英文
-            'best sellers rank', 'sales rank', 'best sellers',
-            # 西班牙语
-            'clasificación en los más vendidos', 'más vendidos de amazon', 'clasificación',
-            'clasificación en los más vendidos de amazon',
-            # 其他语言可以继续添加
-        ]
+        rank_keywords = get_language_keywords(country, 'rank')
         
+        # 如果没有找到国家特定关键词，使用默认的英文关键词
+        if not rank_keywords:
+            rank_keywords = ['best sellers rank', 'sales rank', 'best sellers']
+        
+        # 检查是否包含排名关键词
         for keyword in rank_keywords:
             if keyword in text_lower:
-                logger.info(f"Found rank keyword '{keyword}' in text: {text[:100]}...")
-                logger.info(f"Full text: {text}")
-                return True
+                # 排除导航栏中的"Best Sellers"链接
+                if keyword == 'best sellers' and len(text.strip()) < 50:
+                    # 如果文本很短且只包含"Best Sellers"，可能是导航链接
+                    continue
+                
+                # 检查是否包含排名模式（#数字 in 类目）
+                if '#' in text and ' in ' in text:
+                    logger.info(f"Found rank keyword '{keyword}' in text: {text[:100]}...")
+                    logger.info(f"Full text: {text}")
+                    return True
         
         return False
-    
+
     def _extract_best_sellers_rank(self, soup: BeautifulSoup) -> Optional[dict]:
         """从Best Sellers Rank中提取类目和排名信息"""
         try:
@@ -1344,7 +1369,28 @@ class AmazonScraper(BaseScraper):
                         rank_li = li
                         break
             
-            # 方法5：尝试查找任何包含"#"和"in"的文本（更宽泛的搜索）
+            # 方法5：检查productDetails_detailBullets_sections1表格中的Best Sellers Rank
+            if not rank_li:
+                logger.info("Checking productDetails_detailBullets_sections1 table...")
+                detail_table = soup.select_one('#productDetails_detailBullets_sections1')
+                if detail_table:
+                    logger.info("Found productDetails_detailBullets_sections1 table")
+                    # 查找Best Sellers Rank行
+                    for tr in detail_table.select('tr'):
+                        th = tr.select_one('th')
+                        if th and 'best sellers rank' in th.get_text().lower():
+                            logger.info("Found Best Sellers Rank row in productDetails table")
+                            td = tr.select_one('td')
+                            if td:
+                                # 在td中查找ul.a-unordered-list.a-nostyle.a-vertical
+                                rank_ul = td.select_one('ul.a-unordered-list.a-nostyle.a-vertical')
+                                if rank_ul:
+                                    logger.info("Found rank ul in productDetails table")
+                                    # 设置rank_ul，后续处理会使用整个ul
+                                    logger.info(f"Found rank ul in productDetails table: {rank_ul.get_text()[:200]}...")
+                                    break
+            
+            # 方法6：尝试查找任何包含"#"和"in"的文本（更宽泛的搜索）
             if not rank_li:
                 for li in soup.select('li'):
                     text = li.get_text()
@@ -1400,7 +1446,8 @@ class AmazonScraper(BaseScraper):
                         logger.info(f"LI element text length: {len(text)}")
                         break
             
-            if not rank_li:
+            # 如果既没有找到rank_li也没有找到rank_ul，则返回None
+            if not rank_li and not rank_ul:
                 logger.info("Best Sellers Rank li element not found")
                 # 添加调试信息：查看页面上所有的li元素
                 all_li_elements = soup.select('li')
@@ -1445,38 +1492,38 @@ class AmazonScraper(BaseScraper):
             
             for li in rank_lis:
                 main_rank_text = li.get_text()
-                # 处理HTML实体
-                main_rank_text = main_rank_text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-                logger.info(f"Processing rank text: {main_rank_text[:200]}")
-                
-                # 改进的匹配模式：支持多种格式
-                # 英文格式：#数字 in 类目名
-                # 西班牙语格式：nº数字 en 类目名
-                patterns = [
-                    r'#([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 英文格式
-                    r'nº([0-9,]+)\s+en\s+([^<\(]+?)(?:\s*\(|$)',  # 西班牙语格式
-                ]
-                
-                matches = []
-                for i, pattern in enumerate(patterns):
-                    pattern_matches = re.findall(pattern, main_rank_text)
-                    logger.info(f"Pattern {i+1} '{pattern}' found {len(pattern_matches)} matches: {pattern_matches}")
-                    matches.extend(pattern_matches)
-                    if pattern_matches:
-                        break
-                
-                for rank, category in matches:
-                    rank_clean = rank.replace(',', '')
-                    category_clean = category.strip()
-                    if category_clean and not category_clean.startswith('See Top'):
-                        categories.append(category_clean)
-                        ranks.append(f"#{rank_clean}")
-                        structured_ranks.append({
-                            'category': category_clean,
-                            'rank': f"#{rank_clean}",
-                            'rank_number': int(rank_clean)
-                        })
-                        logger.info(f"Found category: {category_clean}, rank: #{rank_clean}")
+            # 处理HTML实体
+            main_rank_text = main_rank_text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+            logger.info(f"Processing rank text: {main_rank_text[:200]}")
+            
+            # 改进的匹配模式：支持多种格式
+            # 英文格式：#数字 in 类目名
+            # 西班牙语格式：nº数字 en 类目名
+            patterns = [
+                r'#([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 英文格式
+                r'nº([0-9,]+)\s+en\s+([^<\(]+?)(?:\s*\(|$)',  # 西班牙语格式
+            ]
+            
+            matches = []
+            for i, pattern in enumerate(patterns):
+                pattern_matches = re.findall(pattern, main_rank_text)
+                logger.info(f"Pattern {i+1} '{pattern}' found {len(pattern_matches)} matches: {pattern_matches}")
+                matches.extend(pattern_matches)
+                if pattern_matches:
+                    break
+            
+            for rank, category in matches:
+                rank_clean = rank.replace(',', '')
+                category_clean = category.strip()
+                if category_clean and not category_clean.startswith('See Top'):
+                    categories.append(category_clean)
+                    ranks.append(f"#{rank_clean}")
+                    structured_ranks.append({
+                        'category': category_clean,
+                        'rank': f"#{rank_clean}",
+                        'rank_number': int(rank_clean)
+                    })
+                    logger.info(f"Found category: {category_clean}, rank: #{rank_clean}")
             
             # 查找子类目（在ul.zg_hrsr中）
             sub_ul = rank_li.select_one('ul.zg_hrsr')
@@ -1541,19 +1588,17 @@ class AmazonScraper(BaseScraper):
         
         return None
     
-    def _is_listing_date_text(self, text: str) -> bool:
+    def _is_listing_date_text(self, text: str, country: str = "US") -> bool:
         """检查文本是否包含上架时间相关的关键词（多语言支持）"""
         if not text:
             return False
         
         text_lower = text.lower()
-        date_keywords = [
-            # 英文
-            'date first available', 'first available', 'available from',
-            # 西班牙语
-            'producto en amazon', 'desde', 'disponible desde',
-            # 其他语言可以继续添加
-        ]
+        date_keywords = get_language_keywords(country, 'listing_date')
+        
+        # 如果没有找到国家特定关键词，使用默认的英文关键词
+        if not date_keywords:
+            date_keywords = ['date first available', 'first available', 'available from']
         
         return any(keyword in text_lower for keyword in date_keywords)
     
