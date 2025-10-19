@@ -1340,44 +1340,56 @@ class AmazonScraper(BaseScraper):
             # 查找Best Sellers Rank的li元素 - 使用更通用的方法
             rank_li = None
             
-            # 方法1：查找包含排名相关文本的li元素（多语言支持）
-            for li in soup.select('li'):
-                text = li.get_text()
-                if self._is_rank_text(text):
-                    rank_li = li
-                    logger.info(f"Found rank li element: {text[:200]}...")
-                    logger.info(f"LI element HTML: {str(li)[:500]}...")
-                    logger.info(f"LI element text length: {len(text)}")
-                    break
+            # 方法1：优先查找表格形式的Best Sellers Rank
+            logger.info("Searching for table-form Best Sellers Rank...")
+            table_ths = soup.select('th.a-color-secondary.a-size-base.prodDetSectionEntry')
+            logger.info(f"Found {len(table_ths)} table th elements")
+            for i, th in enumerate(table_ths):
+                th_text = th.get_text()
+                logger.info(f"Table th {i+1}: {th_text[:100]}...")
+                if 'Best Sellers Rank' in th_text:
+                    logger.info(f"Found Best Sellers Rank th: {th_text}")
+                    td = th.find_next_sibling('td')
+                    if td:
+                        logger.info(f"Found td element: {str(td)[:200]}...")
+                        # 在td中查找ul元素
+                        ul = td.find('ul', class_='a-unordered-list a-nostyle a-vertical')
+                        if ul:
+                            # 使用ul作为rank_li，这样后续处理可以处理多个li
+                            rank_li = ul
+                            rank_ul = ul
+                            logger.info(f"Found Best Sellers Rank table with ul: {ul.get_text()[:200]}...")
+                            break
+                        else:
+                            logger.info("No ul found in td")
+                    else:
+                        logger.info("No td found after th")
+                else:
+                    logger.info(f"Table th {i+1} does not contain 'Best Sellers Rank'")
             
-            # 方法2：如果没找到，尝试查找表格形式的Best Sellers Rank
+            # 方法2：如果没找到表格形式，尝试查找productDetails_detailBullets_sections1表格
             if not rank_li:
-                # 查找表格形式的Best Sellers Rank
-                for th in soup.select('th.a-color-secondary.a-size-base.prodDetSectionEntry'):
-                    if 'Best Sellers Rank' in th.get_text():
-                        td = th.find_next_sibling('td')
-                        if td:
-                            # 在td中查找ul元素
-                            ul = td.find('ul', class_='a-unordered-list a-nostyle a-vertical')
-                            if ul:
-                                # 使用ul作为rank_li，这样后续处理可以处理多个li
-                                rank_li = ul
-                                logger.info(f"Found Best Sellers Rank table with ul: {ul.get_text()[:200]}...")
-                                break
-                
-                # 如果还没找到，尝试查找productDetails_detailBullets_sections1表格
-                if not rank_li:
-                    detail_table = soup.select_one('#productDetails_detailBullets_sections1')
-                    if detail_table:
-                        for th in detail_table.select('th.a-color-secondary.a-size-base.prodDetSectionEntry'):
-                            if 'Best Sellers Rank' in th.get_text():
-                                td = th.find_next_sibling('td')
-                                if td:
-                                    ul = td.find('ul', class_='a-unordered-list a-nostyle a-vertical')
-                                    if ul:
-                                        rank_li = ul
-                                        logger.info(f"Found Best Sellers Rank in productDetails table with ul: {ul.get_text()[:200]}...")
-                                        break
+                detail_table = soup.select_one('#productDetails_detailBullets_sections1')
+                if detail_table:
+                    logger.info("Searching in productDetails_detailBullets_sections1 table...")
+                    for th in detail_table.select('th.a-color-secondary.a-size-base.prodDetSectionEntry'):
+                        if 'Best Sellers Rank' in th.get_text():
+                            logger.info(f"Found Best Sellers Rank th in productDetails: {th.get_text()}")
+                            td = th.find_next_sibling('td')
+                            if td:
+                                logger.info(f"Found td element in productDetails: {str(td)[:200]}...")
+                                ul = td.find('ul', class_='a-unordered-list a-nostyle a-vertical')
+                                if ul:
+                                    rank_li = ul
+                                    rank_ul = ul
+                                    logger.info(f"Found Best Sellers Rank in productDetails table with ul: {ul.get_text()[:200]}...")
+                                    break
+                                else:
+                                    logger.info("No ul found in productDetails td")
+                            else:
+                                logger.info("No td found in productDetails")
+                        else:
+                            logger.info(f"productDetails th does not contain 'Best Sellers Rank': {th.get_text()[:50]}...")
             
             # 方法3：如果没找到，尝试查找包含"Best Sellers Rank"的li元素
             if not rank_li:
@@ -1566,22 +1578,32 @@ class AmazonScraper(BaseScraper):
                         # 清理类目名称
                         category_clean = re.sub(r'\s+', ' ', category_clean).strip()
                         if category_clean and len(category_clean) > 2:
-                            # 检查是否已经存在相同的类目和排名组合
+                            # 清理类目名称，移除常见的额外文本
+                            category_base = re.sub(r'\s*\([^)]*\)\s*$', '', category_clean)  # 移除末尾的括号内容
+                            category_base = re.sub(r'\s*\(See Top \d+ in [^)]*\)\s*$', '', category_base)  # 移除 "See Top X in ..." 内容
+                            category_base = category_base.strip()
+                            
+                            # 检查是否已经存在相同的类目和排名组合（基于清理后的类目名称）
                             existing = any(
-                                item['category'] == category_clean and item['rank'] == f"#{rank_clean}"
+                                (item['category'] == category_clean or 
+                                 re.sub(r'\s*\([^)]*\)\s*$', '', item['category']).strip() == category_base) and 
+                                item['rank'] == f"#{rank_clean}"
                                 for item in structured_ranks
                             )
+                            
                             if not existing:
-                                categories.append(category_clean)
+                                # 使用清理后的类目名称
+                                final_category = category_base if category_base else category_clean
+                                categories.append(final_category)
                                 ranks.append(f"#{rank_clean}")
                                 structured_ranks.append({
-                                    'category': category_clean,
+                                    'category': final_category,
                                     'rank': f"#{rank_clean}",
                                     'rank_number': int(rank_clean)
                                 })
-                                logger.info(f"Found sub category: {category_clean}, rank: #{rank_clean}")
+                                logger.info(f"Found sub category: {final_category}, rank: #{rank_clean}")
                             else:
-                                logger.info(f"Skipping duplicate category: {category_clean}, rank: #{rank_clean}")
+                                logger.info(f"Skipping duplicate category: {category_clean} (base: {category_base}), rank: #{rank_clean}")
             
             if categories and ranks:
                 return {
