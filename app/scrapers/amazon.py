@@ -1350,7 +1350,36 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"LI element text length: {len(text)}")
                     break
             
-            # 方法2：如果没找到，尝试查找包含"Best Sellers Rank"的li元素
+            # 方法2：如果没找到，尝试查找表格形式的Best Sellers Rank
+            if not rank_li:
+                # 查找表格形式的Best Sellers Rank
+                for th in soup.select('th.a-color-secondary.a-size-base.prodDetSectionEntry'):
+                    if 'Best Sellers Rank' in th.get_text():
+                        td = th.find_next_sibling('td')
+                        if td:
+                            # 在td中查找ul元素
+                            ul = td.find('ul', class_='a-unordered-list a-nostyle a-vertical')
+                            if ul:
+                                # 使用ul作为rank_li，这样后续处理可以处理多个li
+                                rank_li = ul
+                                logger.info(f"Found Best Sellers Rank table with ul: {ul.get_text()[:200]}...")
+                                break
+                
+                # 如果还没找到，尝试查找productDetails_detailBullets_sections1表格
+                if not rank_li:
+                    detail_table = soup.select_one('#productDetails_detailBullets_sections1')
+                    if detail_table:
+                        for th in detail_table.select('th.a-color-secondary.a-size-base.prodDetSectionEntry'):
+                            if 'Best Sellers Rank' in th.get_text():
+                                td = th.find_next_sibling('td')
+                                if td:
+                                    ul = td.find('ul', class_='a-unordered-list a-nostyle a-vertical')
+                                    if ul:
+                                        rank_li = ul
+                                        logger.info(f"Found Best Sellers Rank in productDetails table with ul: {ul.get_text()[:200]}...")
+                                        break
+            
+            # 方法3：如果没找到，尝试查找包含"Best Sellers Rank"的li元素
             if not rank_li:
                 # 直接搜索包含"Best Sellers Rank"的li元素
                 for li in soup.select('li'):
@@ -1512,9 +1541,18 @@ class AmazonScraper(BaseScraper):
                         logger.info(f"Found category: {category_clean}, rank: #{rank_clean}")
             
             # 查找子类目（在ul.zg_hrsr中）
-            sub_ul = rank_li.select_one('ul.zg_hrsr')
+            sub_ul = None
+            if rank_li and rank_li.name == 'ul':
+                # 如果rank_li本身就是ul，直接使用
+                sub_ul = rank_li
+                logger.info(f"Using rank_li as sub_ul with {len(sub_ul.select('li'))} li elements")
+            else:
+                # 否则在rank_li中查找ul.zg_hrsr
+                sub_ul = rank_li.select_one('ul.zg_hrsr') if rank_li else None
+                if sub_ul:
+                    logger.info(f"Found sub_ul with {len(sub_ul.select('li'))} li elements")
+            
             if sub_ul:
-                logger.info(f"Found sub_ul with {len(sub_ul.select('li'))} li elements")
                 sub_items = sub_ul.select('li span.a-list-item')
                 logger.info(f"Found {len(sub_items)} sub items")
                 for i, item in enumerate(sub_items):
