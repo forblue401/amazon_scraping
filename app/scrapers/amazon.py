@@ -71,6 +71,34 @@ class AmazonScraper(BaseScraper):
             'aws-target-locale': 'en-CA'
         }
     
+    def _get_uk_delivery_cookies(self) -> dict:
+        """获取英国配送地址的Cookie设置"""
+        return {
+            # 英国配送地址Cookie设置
+            'i18n-prefs': 'GBP',
+            'lc-main': 'en_GB',
+            'session-id': '144-8192884-2975745',
+            'session-id-time': '2082787201l',
+            'ubid-main': '130-4907599-8762048',
+            # 英国伦敦配送地址
+            'aws-target-data': '{"countryOfResidence":"GB","region":"England","city":"London","postalCode":"EC1A 1BB","countryCode":"GB"}',
+            'aws-target-address': '{"countryOfResidence":"GB","region":"England","city":"London","postalCode":"EC1A 1BB","countryCode":"GB"}',
+            'aws-target-location': '{"countryOfResidence":"GB","region":"England","city":"London","postalCode":"EC1A 1BB","countryCode":"GB"}',
+            'aws-target-delivery': '{"countryOfResidence":"GB","region":"England","city":"London","postalCode":"EC1A 1BB","countryCode":"GB"}',
+            'aws-target-locale': 'en-GB',
+            'aws-target-currency': 'GBP',
+            'aws-target-timezone': 'Europe/London',
+            'aws-target-country': 'GB',
+            'aws-target-region': 'England',
+            'aws-target-city': 'London',
+            'aws-target-postal': 'EC1A 1BB',
+            'aws-target-zip': 'EC1A 1BB',
+            'aws-target-state': 'England',
+            'aws-target-city-state': 'London, England',
+            'aws-target-postal-code': 'EC1A 1BB',
+            'aws-target-zip-code': 'EC1A 1BB'
+        }
+    
     async def scrape_product(self, asin: str, country: str) -> Dict[str, Any]:
         """
         爬取产品信息（两阶段）
@@ -108,6 +136,12 @@ class AmazonScraper(BaseScraper):
         if country == "US":
             us_cookies = self._get_us_delivery_cookies()
             content = await self.fetch_page(url, cookies=us_cookies)
+        elif country == "CA":
+            ca_cookies = self._get_ca_delivery_cookies()
+            content = await self.fetch_page(url, cookies=ca_cookies)
+        elif country == "UK":
+            uk_cookies = self._get_uk_delivery_cookies()
+            content = await self.fetch_page(url, cookies=uk_cookies)
         else:
             # 暂时不使用cookie，避免影响页面内容
             content = await self.fetch_with_delay(url)
@@ -115,6 +149,9 @@ class AmazonScraper(BaseScraper):
             raise Exception("Failed to fetch product page")
         
         soup = BeautifulSoup(content, 'html.parser')
+        
+        # 设置当前URL用于后续的卖家页面URL构建
+        self.current_url = url
         
         # 添加调试信息
         logger.info(f"Page content length: {len(content)}")
@@ -905,6 +942,30 @@ class AmazonScraper(BaseScraper):
         # 专门查找英国亚马逊的配送方式结构
         uk_shipping_divs = soup.select('div.offer-display-feature-text.a-spacing-none.odf-truncation-popover')
         logger.info(f"Found {len(uk_shipping_divs)} UK shipping divs")
+        
+        # 如果没找到，尝试更宽泛的选择器
+        if not uk_shipping_divs:
+            logger.info("No UK shipping divs found, trying broader selectors...")
+            # 尝试查找包含 offer-display-feature-text 的div
+            broader_divs = soup.select('div[class*="offer-display-feature-text"]')
+            logger.info(f"Found {len(broader_divs)} divs with offer-display-feature-text")
+            for i, div in enumerate(broader_divs[:5]):  # 只显示前5个
+                classes = div.get('class', [])
+                logger.info(f"Broader div {i+1}: classes={classes}")
+                if 'odf-truncation-popover' in classes:
+                    uk_shipping_divs.append(div)
+                    logger.info(f"Added div {i+1} to UK shipping divs")
+            
+            # 尝试查找包含 odf-truncation-popover 的div
+            popover_divs = soup.select('div[class*="odf-truncation-popover"]')
+            logger.info(f"Found {len(popover_divs)} divs with odf-truncation-popover")
+            for i, div in enumerate(popover_divs[:5]):  # 只显示前5个
+                classes = div.get('class', [])
+                logger.info(f"Popover div {i+1}: classes={classes}")
+                if 'offer-display-feature-text' in classes:
+                    uk_shipping_divs.append(div)
+                    logger.info(f"Added popover div {i+1} to UK shipping divs")
+        
         for i, div in enumerate(uk_shipping_divs):
             message_span = div.select_one('span.a-size-small.offer-display-feature-text-message')
             if message_span:
@@ -1153,7 +1214,20 @@ class AmazonScraper(BaseScraper):
                     if seller_match and asin_match:
                         seller_id = seller_match.group(1)
                         asin = asin_match.group(1)
-                        seller_url = f"https://www.amazon.com/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link"
+                        # 根据当前页面域名确定正确的卖家页面URL
+                        logger.info(f"Current URL for seller page conversion: {self.current_url}")
+                        if 'amazon.co.uk' in self.current_url or 'amazon.uk' in self.current_url:
+                            seller_url = f"https://www.amazon.co.uk/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link"
+                            logger.info("Using UK Amazon for seller page")
+                        elif 'amazon.ca' in self.current_url:
+                            seller_url = f"https://www.amazon.ca/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link"
+                            logger.info("Using CA Amazon for seller page")
+                        elif 'amazon.com.mx' in self.current_url:
+                            seller_url = f"https://www.amazon.com.mx/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link"
+                            logger.info("Using MX Amazon for seller page")
+                        else:
+                            seller_url = f"https://www.amazon.com/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link"
+                            logger.info("Using US Amazon for seller page")
                         logger.info(f"Converted to seller page URL: {seller_url}")
                     else:
                         logger.warning(f"Could not extract seller ID or ASIN from: {seller_url}")
@@ -1807,12 +1881,74 @@ class AmazonScraper(BaseScraper):
         return business_name
     
     def _extract_business_address(self, soup: BeautifulSoup) -> Optional[str]:
-        """从卖家页面提取商家地址"""
-        # 根据提供的HTML结构查找Business Address
-        address_parts = []
-        
+        """从卖家页面提取所有卖家详细信息"""
         # 添加调试信息
-        logger.info("Searching for Business Address in seller page...")
+        logger.info("Searching for Detailed Seller Information in seller page...")
+        
+        # 查找"Detailed Seller Information"部分
+        detailed_info = {}
+        
+        # 查找所有包含详细信息的div
+        info_divs = soup.select('div.a-row.a-spacing-none')
+        logger.info(f"Found {len(info_divs)} info divs")
+        
+        for div in info_divs:
+            # 查找包含标签的span
+            label_span = div.select_one('span.a-text-bold')
+            if label_span:
+                label_text = clean_text(label_span.get_text())
+                logger.info(f"Found label: {label_text}")
+                
+                # 查找对应的值
+                value_span = label_span.find_next_sibling('span')
+                if value_span:
+                    value_text = clean_text(value_span.get_text())
+                    if value_text:
+                        detailed_info[label_text] = value_text
+                        logger.info(f"Found {label_text}: {value_text}")
+        
+        # 查找地址信息（indent-left的div）
+        address_sections = {}
+        current_section = None
+        
+        for div in soup.select('div.a-row.a-spacing-none'):
+            # 检查是否是地址标签
+            label_span = div.select_one('span.a-text-bold')
+            if label_span and ('Address:' in label_span.get_text() or 'Address' in label_span.get_text()):
+                current_section = clean_text(label_span.get_text())
+                address_sections[current_section] = []
+                logger.info(f"Found address section: {current_section}")
+            # 检查是否是地址行（indent-left）
+            elif 'indent-left' in div.get('class', []) and current_section:
+                span = div.select_one('span')
+                if span:
+                    text = clean_text(span.get_text())
+                    if text:
+                        address_sections[current_section].append(text)
+                        logger.info(f"Found address part for {current_section}: {text}")
+        
+        # 构建完整的卖家信息字符串
+        info_parts = []
+        
+        # 添加基本信息
+        for key, value in detailed_info.items():
+            info_parts.append(f"{key}: {value}")
+        
+        # 添加地址信息
+        for section_name, address_lines in address_sections.items():
+            if address_lines:
+                info_parts.append(f"{section_name}:")
+                for line in address_lines:
+                    info_parts.append(f"  {line}")
+        
+        if info_parts:
+            result = '\n'.join(info_parts)
+            logger.info(f"Complete seller info: {result}")
+            return result
+        
+        # 如果没找到详细信息，回退到原来的地址提取逻辑
+        logger.info("No detailed info found, trying backup address extraction...")
+        address_parts = []
         
         # 查找包含"Business Address:"的span元素
         business_address_found = False
@@ -1839,42 +1975,13 @@ class AmazonScraper(BaseScraper):
                         break
                 break
         
-        if not business_address_found:
-            logger.warning("Business Address label not found")
-        
         if address_parts:
             result = ' '.join(address_parts)
-            logger.info(f"Final address: {result}")
+            logger.info(f"Backup address result: {result}")
             return result
         
-        # 备用方法：直接查找所有indent-left的div
-        logger.info("Trying backup method: searching for indent-left divs")
-        address_divs = soup.select('div.a-row.a-spacing-none.indent-left')
-        logger.info(f"Found {len(address_divs)} indent-left divs")
-        
-        if address_divs:
-            for div in address_divs:
-                span = div.select_one('span')
-                if span:
-                    text = clean_text(span.get_text())
-                    if text:
-                        address_parts.append(text)
-                        logger.info(f"Backup method found: {text}")
-        
-        if address_parts:
-            result = ' '.join(address_parts)
-            logger.info(f"Backup method result: {result}")
-            return result
-        
-        # 备用选择器
-        address_text = self._extract_text_by_selectors(soup, [
-            '.business-address',
-            '.seller-address',
-            '.address-info'
-        ])
-        
-        logger.warning(f"No address found, returning: {address_text}")
-        return address_text
+        logger.warning("No seller information found")
+        return None
     
     def _extract_price(self, soup: BeautifulSoup) -> Optional[str]:
         """提取产品价格"""
