@@ -902,6 +902,19 @@ class AmazonScraper(BaseScraper):
                         else:
                             return "FBM"
         
+        # 专门查找英国亚马逊的配送方式结构
+        uk_shipping_divs = soup.select('div.offer-display-feature-text.a-spacing-none.odf-truncation-popover')
+        logger.info(f"Found {len(uk_shipping_divs)} UK shipping divs")
+        for i, div in enumerate(uk_shipping_divs):
+            message_span = div.select_one('span.a-size-small.offer-display-feature-text-message')
+            if message_span:
+                shipper_name = clean_text(message_span.get_text())
+                logger.info(f"Found UK shipper {i+1}: {shipper_name}")
+                if "Amazon" in shipper_name or "Amazon.com" in shipper_name:
+                    return "FBA"
+                else:
+                    return "FBM"
+        
         # 备用方法：查找其他可能的发货信息
         shipping_text = self._extract_text_by_selectors(soup, [
             '.a-size-base.a-color-secondary',
@@ -1537,32 +1550,78 @@ class AmazonScraper(BaseScraper):
                 logger.info(f"Processing rank text: {main_rank_text[:200]}")
                 
                 # 改进的匹配模式：支持多种格式
-                # 英文格式：#数字 in 类目名
+                # 英文格式：#数字 in 类目名 或 数字 in 类目名
                 # 西班牙语格式：nº数字 en 类目名
                 patterns = [
-                    r'#([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 英文格式
+                    r'#([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 英文格式（带#）
+                    r'([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',   # 英文格式（不带#）
                     r'nº([0-9,]+)\s+en\s+([^<\(]+?)(?:\s*\(|$)',  # 西班牙语格式
-                    r'#([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 更宽松的英文格式
                 ]
                 
                 matches = []
+                used_pattern = None
                 for i, pattern in enumerate(patterns):
                     pattern_matches = re.findall(pattern, main_rank_text)
                     logger.info(f"Pattern {i+1} '{pattern}' found {len(pattern_matches)} matches: {pattern_matches}")
                     if pattern_matches:
                         logger.info(f"Using pattern {i+1} matches: {pattern_matches}")
                         matches.extend(pattern_matches)
+                        used_pattern = i
                         break
+                
+                # 如果标准模式匹配到错误结果，尝试更精确的模式
+                if matches and any(')' in match[1] for match in matches):
+                    logger.info("Detected malformed matches, trying more precise patterns...")
+                    precise_patterns = [
+                        r'#([0-9,]+)\s+in\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',  # 英文格式（带#，更精确）
+                        r'([0-9,]+)\s+in\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',   # 英文格式（不带#，更精确）
+                        r'nº([0-9,]+)\s+en\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',  # 西班牙语格式（更精确）
+                    ]
+                    
+                    new_matches = []
+                    for i, pattern in enumerate(precise_patterns):
+                        pattern_matches = re.findall(pattern, main_rank_text)
+                        logger.info(f"Precise pattern {i+1} '{pattern}' found {len(pattern_matches)} matches: {pattern_matches}")
+                        if pattern_matches:
+                            logger.info(f"Using precise pattern {i+1} matches: {pattern_matches}")
+                            new_matches.extend(pattern_matches)
+                            used_pattern = i
+                            break
+                    
+                    if new_matches:
+                        matches = new_matches
+                
+                # 如果标准模式没有匹配到，尝试更宽松的模式
+                if not matches:
+                    logger.info("Trying more flexible patterns...")
+                    flexible_patterns = [
+                        r'#([0-9,]+)\s+in\s+([^<]+?)(?:\s*\([^)]*\)|$)',  # 英文格式（带#，更宽松）
+                        r'([0-9,]+)\s+in\s+([^<]+?)(?:\s*\([^)]*\)|$)',   # 英文格式（不带#，更宽松）
+                        r'nº([0-9,]+)\s+en\s+([^<]+?)(?:\s*\([^)]*\)|$)',  # 西班牙语格式（更宽松）
+                    ]
+                    
+                    for i, pattern in enumerate(flexible_patterns):
+                        pattern_matches = re.findall(pattern, main_rank_text)
+                        logger.info(f"Flexible pattern {i+1} '{pattern}' found {len(pattern_matches)} matches: {pattern_matches}")
+                        if pattern_matches:
+                            logger.info(f"Using flexible pattern {i+1} matches: {pattern_matches}")
+                            matches.extend(pattern_matches)
+                            used_pattern = i
+                            break
                 
                 for rank, category in matches:
                     rank_clean = rank.replace(',', '')
                     category_clean = category.strip()
                     if category_clean and not category_clean.startswith('See Top'):
-                        # 根据原始文本确定排名格式
-                        if 'nº' in main_rank_text:
+                        # 根据使用的模式确定排名格式
+                        if used_pattern == 0:  # 带#的英文格式
+                            rank_format = f"#{rank_clean}"
+                        elif used_pattern == 1:  # 不带#的英文格式
+                            rank_format = f"#{rank_clean}"  # 统一添加#
+                        elif used_pattern == 2:  # 西班牙语格式
                             rank_format = f"nº{rank_clean}"
                         else:
-                            rank_format = f"#{rank_clean}"
+                            rank_format = f"#{rank_clean}"  # 默认格式
                         
                         categories.append(category_clean)
                         ranks.append(rank_format)
@@ -1592,14 +1651,17 @@ class AmazonScraper(BaseScraper):
                     item_text = item.get_text()
                     # 处理HTML实体
                     item_text = item_text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-                    # 支持英文和西班牙语格式
-                    sub_matches = re.findall(r'#([0-9,]+)\s+in\s+([^<]+)|nº([0-9,]+)\s+en\s+([^<]+)', item_text)
+                    # 支持英文和西班牙语格式（带#和不带#）
+                    sub_matches = re.findall(r'#([0-9,]+)\s+in\s+([^<]+)|([0-9,]+)\s+in\s+([^<]+)|nº([0-9,]+)\s+en\s+([^<]+)', item_text)
                     for match in sub_matches:
-                        if match[0] and match[1]:  # 英文格式
+                        if match[0] and match[1]:  # 英文格式（带#）
                             rank, category = match[0], match[1]
                             rank_format = f"#{rank.replace(',', '')}"
-                        elif match[2] and match[3]:  # 西班牙语格式
+                        elif match[2] and match[3]:  # 英文格式（不带#）
                             rank, category = match[2], match[3]
+                            rank_format = f"#{rank.replace(',', '')}"  # 统一添加#
+                        elif match[4] and match[5]:  # 西班牙语格式
+                            rank, category = match[4], match[5]
                             rank_format = f"nº{rank.replace(',', '')}"
                         else:
                             continue
