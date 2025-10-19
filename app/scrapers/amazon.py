@@ -1249,6 +1249,19 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Found brand from table: {brand}")
                     return brand
         
+        # 方法2.1：查找西班牙语表格形式的品牌信息（Marca）
+        for row in brand_rows:
+            # 查找包含 "Marca" 的表格行
+            first_td = row.find('td', class_='a-span3')
+            if first_td:
+                first_td_text = clean_text(first_td.get_text())
+                if first_td_text in ['Marca', 'Brand', 'Brand Name']:
+                    second_td = row.find('td', class_='a-span9')
+                    if second_td:
+                        brand = clean_text(second_td.get_text())
+                        logger.info(f"Found brand from Spanish table: {brand}")
+                        return brand
+        
         # 方法3：查找其他可能的品牌选择器
         brand_text = self._extract_text_by_selectors(soup, [
             '.a-size-base.a-color-secondary',
@@ -1302,9 +1315,9 @@ class AmazonScraper(BaseScraper):
         
         text_lower = text.lower()
         
-        # 首先检查是否包含排名模式（#数字 in 类目）
+        # 首先检查是否包含排名模式（#数字 in 类目 或 nº数字 en 类目）
         import re
-        if re.search(r'#\d+.*in.*', text):
+        if re.search(r'#\d+.*in.*', text) or re.search(r'nº\d+.*en.*', text):
             # 额外检查：确保不是营销文本（如 "#1 DERMATOLOGIST RECOMMENDED"）
             if not re.search(r'#\d+.*(?:recommended|brand|dermatologist|doctor)', text, re.IGNORECASE):
                 logger.info(f"Found rank pattern in text: {text[:100]}...")
@@ -1324,8 +1337,8 @@ class AmazonScraper(BaseScraper):
         
         for keyword in rank_keywords:
             if keyword in text_lower:
-                # 额外检查：确保文本包含排名信息（#数字 in 类目）
-                if '#' in text and ' in ' in text:
+                # 额外检查：确保文本包含排名信息（#数字 in 类目 或 nº数字 en 类目）
+                if ('#' in text and ' in ' in text) or ('nº' in text and ' en ' in text):
                     logger.info(f"Found rank keyword '{keyword}' with rank pattern in text: {text[:100]}...")
                     logger.info(f"Full text: {text}")
                     return True
@@ -1347,8 +1360,10 @@ class AmazonScraper(BaseScraper):
             for i, th in enumerate(table_ths):
                 th_text = th.get_text()
                 logger.info(f"Table th {i+1}: {th_text[:100]}...")
-                if 'Best Sellers Rank' in th_text:
-                    logger.info(f"Found Best Sellers Rank th: {th_text}")
+                # 支持多语言的排名关键词
+                rank_keywords = ['Best Sellers Rank', 'Clasificación en los más vendidos de Amazon', 'Clasificación en los más vendidos']
+                if any(keyword in th_text for keyword in rank_keywords):
+                    logger.info(f"Found ranking th: {th_text}")
                     td = th.find_next_sibling('td')
                     if td:
                         logger.info(f"Found td element: {str(td)[:200]}...")
@@ -1358,14 +1373,14 @@ class AmazonScraper(BaseScraper):
                             # 使用ul作为rank_li，这样后续处理可以处理多个li
                             rank_li = ul
                             rank_ul = ul
-                            logger.info(f"Found Best Sellers Rank table with ul: {ul.get_text()[:200]}...")
+                            logger.info(f"Found ranking table with ul: {ul.get_text()[:200]}...")
                             break
                         else:
                             logger.info("No ul found in td")
                     else:
                         logger.info("No td found after th")
                 else:
-                    logger.info(f"Table th {i+1} does not contain 'Best Sellers Rank'")
+                    logger.info(f"Table th {i+1} does not contain ranking keywords")
             
             # 方法2：如果没找到表格形式，尝试查找productDetails_detailBullets_sections1表格
             if not rank_li:
@@ -1543,14 +1558,20 @@ class AmazonScraper(BaseScraper):
                     rank_clean = rank.replace(',', '')
                     category_clean = category.strip()
                     if category_clean and not category_clean.startswith('See Top'):
+                        # 根据原始文本确定排名格式
+                        if 'nº' in main_rank_text:
+                            rank_format = f"nº{rank_clean}"
+                        else:
+                            rank_format = f"#{rank_clean}"
+                        
                         categories.append(category_clean)
-                        ranks.append(f"#{rank_clean}")
+                        ranks.append(rank_format)
                         structured_ranks.append({
                             'category': category_clean,
-                            'rank': f"#{rank_clean}",
+                            'rank': rank_format,
                             'rank_number': int(rank_clean)
                         })
-                        logger.info(f"Found category: {category_clean}, rank: #{rank_clean}")
+                        logger.info(f"Found category: {category_clean}, rank: {rank_format}")
             
             # 查找子类目（在ul.zg_hrsr中）
             sub_ul = None
@@ -1571,8 +1592,18 @@ class AmazonScraper(BaseScraper):
                     item_text = item.get_text()
                     # 处理HTML实体
                     item_text = item_text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-                    sub_matches = re.findall(r'#([0-9,]+)\s+in\s+([^<]+)', item_text)
-                    for rank, category in sub_matches:
+                    # 支持英文和西班牙语格式
+                    sub_matches = re.findall(r'#([0-9,]+)\s+in\s+([^<]+)|nº([0-9,]+)\s+en\s+([^<]+)', item_text)
+                    for match in sub_matches:
+                        if match[0] and match[1]:  # 英文格式
+                            rank, category = match[0], match[1]
+                            rank_format = f"#{rank.replace(',', '')}"
+                        elif match[2] and match[3]:  # 西班牙语格式
+                            rank, category = match[2], match[3]
+                            rank_format = f"nº{rank.replace(',', '')}"
+                        else:
+                            continue
+                            
                         rank_clean = rank.replace(',', '')
                         category_clean = category.strip()
                         # 清理类目名称
@@ -1581,13 +1612,14 @@ class AmazonScraper(BaseScraper):
                             # 清理类目名称，移除常见的额外文本
                             category_base = re.sub(r'\s*\([^)]*\)\s*$', '', category_clean)  # 移除末尾的括号内容
                             category_base = re.sub(r'\s*\(See Top \d+ in [^)]*\)\s*$', '', category_base)  # 移除 "See Top X in ..." 内容
+                            category_base = re.sub(r'\s*\(Ver el Top \d+ en [^)]*\)\s*$', '', category_base)  # 移除西班牙语 "Ver el Top X en ..." 内容
                             category_base = category_base.strip()
                             
                             # 检查是否已经存在相同的类目和排名组合（基于清理后的类目名称）
                             existing = any(
                                 (item['category'] == category_clean or 
                                  re.sub(r'\s*\([^)]*\)\s*$', '', item['category']).strip() == category_base) and 
-                                item['rank'] == f"#{rank_clean}"
+                                item['rank'] == rank_format
                                 for item in structured_ranks
                             )
                             
@@ -1595,15 +1627,15 @@ class AmazonScraper(BaseScraper):
                                 # 使用清理后的类目名称
                                 final_category = category_base if category_base else category_clean
                                 categories.append(final_category)
-                                ranks.append(f"#{rank_clean}")
+                                ranks.append(rank_format)
                                 structured_ranks.append({
                                     'category': final_category,
-                                    'rank': f"#{rank_clean}",
+                                    'rank': rank_format,
                                     'rank_number': int(rank_clean)
                                 })
-                                logger.info(f"Found sub category: {final_category}, rank: #{rank_clean}")
+                                logger.info(f"Found sub category: {final_category}, rank: {rank_format}")
                             else:
-                                logger.info(f"Skipping duplicate category: {category_clean} (base: {category_base}), rank: #{rank_clean}")
+                                logger.info(f"Skipping duplicate category: {category_clean} (base: {category_base}), rank: {rank_format}")
             
             if categories and ranks:
                 return {
