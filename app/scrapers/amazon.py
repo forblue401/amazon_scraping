@@ -56,6 +56,21 @@ class AmazonScraper(BaseScraper):
             'aws-target-zip-code': '10001'
         }
     
+    def _get_ca_delivery_cookies(self) -> dict:
+        """获取加拿大配送地址的Cookie设置"""
+        return {
+            # 简化的加拿大Cookie设置，避免过度限制
+            'i18n-prefs': 'CAD',
+            'lc-main': 'en_CA',
+            'session-id': '144-8192884-2975745',
+            'session-id-time': '2082787201l',
+            'ubid-main': '130-4907599-8762048',
+            # 基本的配送地址信息
+            'aws-target-country': 'CA',
+            'aws-target-currency': 'CAD',
+            'aws-target-locale': 'en-CA'
+        }
+    
     async def scrape_product(self, asin: str, country: str) -> Dict[str, Any]:
         """
         爬取产品信息（两阶段）
@@ -89,11 +104,12 @@ class AmazonScraper(BaseScraper):
         """
         第一阶段：爬取商品页面
         """
-        # 为美国设置配送地址Cookie
+        # 为不同国家设置配送地址Cookie
         if country == "US":
             us_cookies = self._get_us_delivery_cookies()
             content = await self.fetch_page(url, cookies=us_cookies)
         else:
+            # 暂时不使用cookie，避免影响页面内容
             content = await self.fetch_with_delay(url)
         if not content:
             raise Exception("Failed to fetch product page")
@@ -1285,6 +1301,18 @@ class AmazonScraper(BaseScraper):
             return False
         
         text_lower = text.lower()
+        
+        # 首先检查是否包含排名模式（#数字 in 类目）
+        import re
+        if re.search(r'#\d+.*in.*', text):
+            # 额外检查：确保不是营销文本（如 "#1 DERMATOLOGIST RECOMMENDED"）
+            if not re.search(r'#\d+.*(?:recommended|brand|dermatologist|doctor)', text, re.IGNORECASE):
+                logger.info(f"Found rank pattern in text: {text[:100]}...")
+                return True
+            else:
+                logger.info(f"Found # pattern but appears to be marketing text: {text[:100]}...")
+        
+        # 然后检查关键词，但要求文本长度合理且包含排名信息
         rank_keywords = [
             # 英文
             'best sellers rank', 'sales rank', 'best sellers',
@@ -1296,9 +1324,13 @@ class AmazonScraper(BaseScraper):
         
         for keyword in rank_keywords:
             if keyword in text_lower:
-                logger.info(f"Found rank keyword '{keyword}' in text: {text[:100]}...")
-                logger.info(f"Full text: {text}")
-                return True
+                # 额外检查：确保文本包含排名信息（#数字 in 类目）
+                if '#' in text and ' in ' in text:
+                    logger.info(f"Found rank keyword '{keyword}' with rank pattern in text: {text[:100]}...")
+                    logger.info(f"Full text: {text}")
+                    return True
+                else:
+                    logger.info(f"Found rank keyword '{keyword}' but no rank pattern in text: {text[:100]}...")
         
         return False
     
@@ -1318,16 +1350,15 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"LI element text length: {len(text)}")
                     break
             
-            # 方法2：如果没找到，尝试查找detailBullets_feature_div中的li
+            # 方法2：如果没找到，尝试查找包含"Best Sellers Rank"的li元素
             if not rank_li:
-                detail_div = soup.select_one('#detailBullets_feature_div')
-                if detail_div:
-                    for li in detail_div.select('li'):
-                        text = li.get_text()
-                        if self._is_rank_text(text):
-                            rank_li = li
-                            logger.info(f"Found rank li in detailBullets: {text[:200]}...")
-                            break
+                # 直接搜索包含"Best Sellers Rank"的li元素
+                for li in soup.select('li'):
+                    text = li.get_text()
+                    if 'Best Sellers Rank' in text and '#' in text and ' in ' in text:
+                        rank_li = li
+                        logger.info(f"Found Best Sellers Rank li: {text[:200]}...")
+                        break
             
             # 方法3：尝试查找包含排名相关文本的其他li元素
             if not rank_li:
@@ -1455,14 +1486,16 @@ class AmazonScraper(BaseScraper):
                 patterns = [
                     r'#([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 英文格式
                     r'nº([0-9,]+)\s+en\s+([^<\(]+?)(?:\s*\(|$)',  # 西班牙语格式
+                    r'#([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 更宽松的英文格式
                 ]
                 
                 matches = []
                 for i, pattern in enumerate(patterns):
                     pattern_matches = re.findall(pattern, main_rank_text)
                     logger.info(f"Pattern {i+1} '{pattern}' found {len(pattern_matches)} matches: {pattern_matches}")
-                    matches.extend(pattern_matches)
                     if pattern_matches:
+                        logger.info(f"Using pattern {i+1} matches: {pattern_matches}")
+                        matches.extend(pattern_matches)
                         break
                 
                 for rank, category in matches:
@@ -1481,8 +1514,10 @@ class AmazonScraper(BaseScraper):
             # 查找子类目（在ul.zg_hrsr中）
             sub_ul = rank_li.select_one('ul.zg_hrsr')
             if sub_ul:
+                logger.info(f"Found sub_ul with {len(sub_ul.select('li'))} li elements")
                 sub_items = sub_ul.select('li span.a-list-item')
-                for item in sub_items:
+                logger.info(f"Found {len(sub_items)} sub items")
+                for i, item in enumerate(sub_items):
                     item_text = item.get_text()
                     # 处理HTML实体
                     item_text = item_text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
