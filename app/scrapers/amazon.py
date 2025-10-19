@@ -261,7 +261,8 @@ class AmazonScraper(BaseScraper):
             # 添加调试日志
             logger.info(f"Seller page extracted - Name: {business_name}, Address: {business_address}")
             
-            return format_seller_info(business_name, business_address)
+            # 直接返回business_address，因为它已经包含了完整的卖家信息
+            return business_address
             
         except Exception as e:
             logger.warning(f"Error scraping seller page {seller_url}: {str(e)}")
@@ -1206,7 +1207,7 @@ class AmazonScraper(BaseScraper):
                 # 从 /gp/help/seller/at-a-glance.html/ref=dp_merchant_link?ie=UTF8&seller=AKVDYWFA30MQ8&asin=...
                 # 转换为 /sp?ie=UTF8&seller=AKVDYWFA30MQ8&asin=...
                 if '/gp/help/seller/' in seller_url:
-                    # 提取seller参数
+                    # 提取seller参数和ASIN参数
                     import re
                     seller_match = re.search(r'seller=([A-Z0-9]+)', seller_url)
                     asin_match = re.search(r'asin=([A-Z0-9]+)', seller_url)
@@ -1214,19 +1215,30 @@ class AmazonScraper(BaseScraper):
                     if seller_match and asin_match:
                         seller_id = seller_match.group(1)
                         asin = asin_match.group(1)
+                        
+                        # 提取其他参数（如isAmazonFulfilled等）
+                        other_params = []
+                        if 'isAmazonFulfilled=' in seller_url:
+                            fulfilled_match = re.search(r'isAmazonFulfilled=([^&]+)', seller_url)
+                            if fulfilled_match:
+                                other_params.append(f"isAmazonFulfilled={fulfilled_match.group(1)}")
+                        
+                        # 构建其他参数字符串
+                        other_params_str = '&' + '&'.join(other_params) if other_params else ''
+                        
                         # 根据当前页面域名确定正确的卖家页面URL
                         logger.info(f"Current URL for seller page conversion: {self.current_url}")
                         if 'amazon.co.uk' in self.current_url or 'amazon.uk' in self.current_url:
-                            seller_url = f"https://www.amazon.co.uk/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link"
+                            seller_url = f"https://www.amazon.co.uk/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using UK Amazon for seller page")
                         elif 'amazon.ca' in self.current_url:
-                            seller_url = f"https://www.amazon.ca/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link"
+                            seller_url = f"https://www.amazon.ca/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using CA Amazon for seller page")
                         elif 'amazon.com.mx' in self.current_url:
-                            seller_url = f"https://www.amazon.com.mx/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link"
+                            seller_url = f"https://www.amazon.com.mx/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using MX Amazon for seller page")
                         else:
-                            seller_url = f"https://www.amazon.com/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link"
+                            seller_url = f"https://www.amazon.com/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using US Amazon for seller page")
                         logger.info(f"Converted to seller page URL: {seller_url}")
                     else:
@@ -1888,9 +1900,20 @@ class AmazonScraper(BaseScraper):
         # 查找"Detailed Seller Information"部分
         detailed_info = {}
         
+        # 首先尝试查找包含详细卖家信息的容器
+        seller_info_containers = soup.select('div.a-box-inner.a-padding-medium')
+        logger.info(f"Found {len(seller_info_containers)} seller info containers")
+        
         # 查找所有包含详细信息的div
         info_divs = soup.select('div.a-row.a-spacing-none')
         logger.info(f"Found {len(info_divs)} info divs")
+        
+        # 如果在容器中找到信息，优先使用容器内的信息
+        if seller_info_containers:
+            for container in seller_info_containers:
+                container_divs = container.select('div.a-row.a-spacing-none')
+                logger.info(f"Found {len(container_divs)} divs in seller info container")
+                info_divs.extend(container_divs)
         
         for div in info_divs:
             # 查找包含标签的span
@@ -1911,13 +1934,20 @@ class AmazonScraper(BaseScraper):
         address_sections = {}
         current_section = None
         
-        for div in soup.select('div.a-row.a-spacing-none'):
-            # 检查是否是地址标签
+        logger.info("Starting address extraction...")
+        for i, div in enumerate(info_divs):
+            logger.info(f"Processing div {i+1}: classes={div.get('class', [])}")
+            
+            # 检查是否是地址标签（支持多语言）
             label_span = div.select_one('span.a-text-bold')
-            if label_span and ('Address:' in label_span.get_text() or 'Address' in label_span.get_text()):
-                current_section = clean_text(label_span.get_text())
-                address_sections[current_section] = []
-                logger.info(f"Found address section: {current_section}")
+            if label_span:
+                label_text = label_span.get_text()
+                logger.info(f"Found label text: '{label_text}'")
+                # 支持英文和西班牙语的地址标签
+                if any(keyword in label_text for keyword in ['Address:', 'Address', 'Dirección:', 'Dirección']):
+                    current_section = clean_text(label_text)
+                    address_sections[current_section] = []
+                    logger.info(f"Found address section: {current_section}")
             # 检查是否是地址行（indent-left）
             elif 'indent-left' in div.get('class', []) and current_section:
                 span = div.select_one('span')
@@ -1926,20 +1956,35 @@ class AmazonScraper(BaseScraper):
                     if text:
                         address_sections[current_section].append(text)
                         logger.info(f"Found address part for {current_section}: {text}")
+                else:
+                    logger.info(f"Found indent-left div but no span inside")
+            elif 'indent-left' in div.get('class', []):
+                logger.info(f"Found indent-left div but no current_section")
         
         # 构建完整的卖家信息字符串
         info_parts = []
         
-        # 添加基本信息
+        # 过滤掉无用的信息，只保留有用的字段
+        useful_fields = []
         for key, value in detailed_info.items():
+            # 过滤掉模板文本和无用信息
+            if any(useless in value.lower() for useless in ['template-suppress-reason-text', 'este producto se envió a través de amazon']):
+                continue
+            # 过滤掉空值或只有空格的值
+            if not value or value.strip() == '':
+                continue
+            useful_fields.append((key, value))
+        
+        # 添加有用的基本信息
+        for key, value in useful_fields:
             info_parts.append(f"{key}: {value}")
         
-        # 添加地址信息
+        # 添加地址信息（保持原始格式）
         for section_name, address_lines in address_sections.items():
             if address_lines:
                 info_parts.append(f"{section_name}:")
                 for line in address_lines:
-                    info_parts.append(f"  {line}")
+                    info_parts.append(f"{line}")
         
         if info_parts:
             result = '\n'.join(info_parts)
