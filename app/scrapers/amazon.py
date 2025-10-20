@@ -68,7 +68,10 @@ class AmazonScraper(BaseScraper):
             # 基本的配送地址信息
             'aws-target-country': 'CA',
             'aws-target-currency': 'CAD',
-            'aws-target-locale': 'en-CA'
+            'aws-target-locale': 'en-CA',
+            'aws-target-region': 'Alberta',
+            'aws-target-city': 'Calgary',
+            'aws-target-postal': 'T2P 1J9'
         }
     
     def _get_uk_delivery_cookies(self) -> dict:
@@ -940,9 +943,38 @@ class AmazonScraper(BaseScraper):
                         else:
                             return "FBM"
         
-        # 专门查找英国亚马逊的配送方式结构
+        # 专门查找英国和加拿大亚马逊的配送方式结构
         uk_shipping_divs = soup.select('div.offer-display-feature-text.a-spacing-none.odf-truncation-popover')
         logger.info(f"Found {len(uk_shipping_divs)} UK shipping divs")
+        
+        # 添加加拿大亚马逊特定的选择器
+        ca_shipping_divs = soup.select('div[data-automation-id="shipping-info"]')
+        logger.info(f"Found {len(ca_shipping_divs)} CA shipping divs")
+        
+        # 查找所有可能包含发货信息的div
+        all_shipping_divs = soup.select('div[class*="shipping"], div[class*="fulfill"], div[class*="delivery"]')
+        logger.info(f"Found {len(all_shipping_divs)} all shipping divs")
+        for i, div in enumerate(all_shipping_divs[:5]):  # 只显示前5个
+            classes = div.get('class', [])
+            text = clean_text(div.get_text())[:100]
+            logger.info(f"All shipping div {i+1}: classes={classes}, text={text}")
+        
+        # 查找所有包含 "Ships from" 或 "Sold by" 的文本
+        ships_from_texts = soup.find_all(text=lambda text: text and ('Ships from' in text or 'Sold by' in text))
+        logger.info(f"Found {len(ships_from_texts)} 'Ships from' or 'Sold by' texts")
+        for i, text in enumerate(ships_from_texts[:5]):  # 只显示前5个
+            logger.info(f"Ships from text {i+1}: {text.strip()[:100]}")
+        
+        # 处理英国和加拿大的配送方式div
+        for i, div in enumerate(uk_shipping_divs):
+            message_span = div.select_one('span.a-size-small.offer-display-feature-text-message')
+            if message_span:
+                shipper_name = clean_text(message_span.get_text())
+                logger.info(f"Found UK/CA shipper {i+1}: {shipper_name}")
+                if "Amazon" in shipper_name or "Amazon.com" in shipper_name:
+                    return "FBA"
+                else:
+                    return "FBM"
         
         # 如果没找到，尝试更宽泛的选择器
         if not uk_shipping_divs:
