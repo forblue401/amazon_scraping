@@ -1568,6 +1568,9 @@ class AmazonScraper(BaseScraper):
                         elif 'amazon.com.mx' in self.current_url:
                             seller_url = f"https://www.amazon.com.mx/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using MX Amazon for seller page")
+                        elif 'amazon.de' in self.current_url:
+                            seller_url = f"https://www.amazon.de/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
+                            logger.info("Using DE Amazon for seller page")
                         else:
                             seller_url = f"https://www.amazon.com/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using US Amazon for seller page")
@@ -2418,12 +2421,12 @@ class AmazonScraper(BaseScraper):
         # 查找"Detailed Seller Information"部分
         detailed_info = {}
         
-        # 首先尝试查找包含详细卖家信息的容器
-        seller_info_containers = soup.select('div.a-box-inner.a-padding-medium')
+        # 首先尝试查找包含详细卖家信息的容器（支持多种结构）
+        seller_info_containers = soup.select('div.a-box-inner.a-padding-medium, div.a-section.a-spacing-medium, div.a-section.a-spacing-small')
         logger.info(f"Found {len(seller_info_containers)} seller info containers")
         
-        # 查找所有包含详细信息的div
-        info_divs = soup.select('div.a-row.a-spacing-none')
+        # 查找所有包含详细信息的div（支持多种结构）
+        info_divs = soup.select('div.a-row.a-spacing-none, div.a-row.a-spacing-small, div.a-row.a-spacing-medium, div.a-section.a-spacing-none')
         logger.info(f"Found {len(info_divs)} info divs")
         
         # 如果在容器中找到信息，优先使用容器内的信息
@@ -2434,14 +2437,20 @@ class AmazonScraper(BaseScraper):
                 info_divs.extend(container_divs)
         
         for div in info_divs:
-            # 查找包含标签的span
-            label_span = div.select_one('span.a-text-bold')
+            # 查找包含标签的span（支持多种选择器）
+            label_span = div.select_one('span.a-text-bold, span.a-size-base.a-text-bold, span.a-color-secondary')
             if label_span:
                 label_text = clean_text(label_span.get_text())
                 logger.info(f"Found label: {label_text}")
                 
-                # 查找对应的值
+                # 查找对应的值（支持多种选择器）
                 value_span = label_span.find_next_sibling('span')
+                if not value_span:
+                    # 尝试查找同级的下一个元素
+                    value_span = label_span.parent.find_next_sibling('div')
+                    if value_span:
+                        value_span = value_span.select_one('span')
+                
                 if value_span:
                     value_text = clean_text(value_span.get_text())
                     if value_text:
@@ -2461,8 +2470,8 @@ class AmazonScraper(BaseScraper):
             if label_span:
                 label_text = label_span.get_text()
                 logger.info(f"Found label text: '{label_text}'")
-                # 支持英文和西班牙语的地址标签
-                if any(keyword in label_text for keyword in ['Address:', 'Address', 'Dirección:', 'Dirección']):
+                # 支持英文、西班牙语和德语的地址标签
+                if any(keyword in label_text for keyword in ['Address:', 'Address', 'Dirección:', 'Dirección', 'Adresse:', 'Adresse', 'Geschäftsadresse:', 'Geschäftsadresse']):
                     current_section = clean_text(label_text)
                     address_sections[current_section] = []
                     logger.info(f"Found address section: {current_section}")
