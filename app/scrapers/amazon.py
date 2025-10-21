@@ -130,6 +130,34 @@ class AmazonScraper(BaseScraper):
             'aws-target-zip-code': '10115'
         }
     
+    def _get_fr_delivery_cookies(self) -> dict:
+        """获取法国配送地址的Cookie设置"""
+        return {
+            # 法国配送地址Cookie设置
+            'i18n-prefs': 'EUR',
+            'lc-main': 'fr_FR',
+            'session-id': '144-8192884-2975745',
+            'session-id-time': '2082787201l',
+            'ubid-main': '130-4907599-8762048',
+            # 法国巴黎配送地址
+            'aws-target-data': '{"countryOfResidence":"FR","region":"Île-de-France","city":"Paris","postalCode":"75001","countryCode":"FR"}',
+            'aws-target-address': '{"countryOfResidence":"FR","region":"Île-de-France","city":"Paris","postalCode":"75001","countryCode":"FR"}',
+            'aws-target-location': '{"countryOfResidence":"FR","region":"Île-de-France","city":"Paris","postalCode":"75001","countryCode":"FR"}',
+            'aws-target-delivery': '{"countryOfResidence":"FR","region":"Île-de-France","city":"Paris","postalCode":"75001","countryCode":"FR"}',
+            'aws-target-locale': 'fr-FR',
+            'aws-target-currency': 'EUR',
+            'aws-target-timezone': 'Europe/Paris',
+            'aws-target-country': 'FR',
+            'aws-target-region': 'Île-de-France',
+            'aws-target-city': 'Paris',
+            'aws-target-postal': '75001',
+            'aws-target-zip': '75001',
+            'aws-target-state': 'Île-de-France',
+            'aws-target-city-state': 'Paris, Île-de-France',
+            'aws-target-postal-code': '75001',
+            'aws-target-zip-code': '75001'
+        }
+    
     async def scrape_product(self, asin: str, country: str) -> Dict[str, Any]:
         """
         爬取产品信息（两阶段）
@@ -176,6 +204,9 @@ class AmazonScraper(BaseScraper):
         elif country == "DE":
             de_cookies = self._get_de_delivery_cookies()
             content = await self.fetch_page(url, cookies=de_cookies, country=country)
+        elif country == "FR":
+            fr_cookies = self._get_fr_delivery_cookies()
+            content = await self.fetch_page(url, cookies=fr_cookies, country=country)
         else:
             # 暂时不使用cookie，避免影响页面内容
             content = await self.fetch_with_delay(url)
@@ -2066,11 +2097,11 @@ class AmazonScraper(BaseScraper):
                 # 西班牙语格式：nº数字 en 类目名
                 # 德国格式：Nr. 数字 in 类目名 或 Best Sellers Rank: 数字 in 类目名
                 patterns = [
-                    r'#([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 英文格式（带#）
-                    r'([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',   # 英文格式（不带#）
-                    r'nº([0-9,]+)\s+en\s+([^<\(]+?)(?:\s*\(|$)',  # 西班牙语格式
-                    r'Nr\.\s*([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 德语格式（Nr. 数字 in 类目）
-                    r'Best Sellers Rank:\s*([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 德国格式
+                    r'#([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 英文格式（带#）
+                    r'([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',   # 英文格式（不带#）
+                    r'nº([0-9,]+)\s+en\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 西班牙语格式
+                    r'Nr\.\s*([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 德语格式（Nr. 数字 in 类目）
+                    r'Best Sellers Rank:\s*([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 德国格式
                 ]
                 
                 matches = []
@@ -2090,11 +2121,11 @@ class AmazonScraper(BaseScraper):
                 if matches and any(')' in match[1] for match in matches):
                     logger.info("Detected malformed matches, trying more precise patterns...")
                     precise_patterns = [
-                        r'#([0-9,]+)\s+in\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',  # 英文格式（带#，更精确）
-                        r'([0-9,]+)\s+in\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',   # 英文格式（不带#，更精确）
-                        r'nº([0-9,]+)\s+en\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',  # 西班牙语格式（更精确）
-                        r'Nr\.\s*([0-9,]+)\s+in\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',  # 德语格式（Nr. 数字 in 类目，更精确）
-                        r'Best Sellers Rank:\s*([0-9,]+)\s+in\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',  # 德国格式（更精确）
+                        r'#([0-9,]+)\s+in\s+([^<\d]+?)(?:\s+\d+\s+in\s+|$)',  # 英文格式（带#，更精确）
+                        r'([0-9,]+)\s+in\s+([^<\d]+?)(?:\s+\d+\s+in\s+|$)',   # 英文格式（不带#，更精确）
+                        r'nº([0-9,]+)\s+en\s+([^<\d]+?)(?:\s+\d+\s+en\s+|$)',  # 西班牙语格式（更精确）
+                        r'Nr\.\s*([0-9,]+)\s+in\s+([^<\d]+?)(?:\s+\d+\s+in\s+|$)',  # 德语格式（Nr. 数字 in 类目，更精确）
+                        r'Best Sellers Rank:\s*([0-9,]+)\s+in\s+([^<\d]+?)(?:\s+\d+\s+in\s+|$)',  # 德国格式（更精确）
                     ]
                     
                     new_matches = []
@@ -2231,7 +2262,8 @@ class AmazonScraper(BaseScraper):
                     # 处理HTML实体
                     item_text = item_text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
                     # 支持英文和西班牙语格式（带#和不带#）
-                    sub_matches = re.findall(r'#([0-9,\.]+)\s+in\s+([^<]+)|([0-9,\.]+)\s+in\s+([^<]+)|nº\s*([0-9,\.]+)\s+en\s+([^<]+)|Nr\.\s*([0-9,\.]+)\s+in\s+([^<]+)', item_text)
+                    # 修复正则表达式，确保正确分割多个类目
+                    sub_matches = re.findall(r'#([0-9,\.]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)|([0-9,\.]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)|nº\s*([0-9,\.]+)\s+en\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)|Nr\.\s*([0-9,\.]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)', item_text)
                     logger.info(f"Processing sub item text: '{item_text}'")
                     logger.info(f"Found {len(sub_matches)} sub matches: {sub_matches}")
                     for match in sub_matches:
@@ -2328,6 +2360,8 @@ class AmazonScraper(BaseScraper):
             'producto en amazon', 'desde', 'disponible desde',
             # 德语
             'im angebot von amazon.de seit', 'seit', 'verfügbar seit',
+            # 法语
+            'date de mise en ligne sur amazon.fr', 'mise en ligne', 'disponible depuis',
             # 其他语言可以继续添加
         ]
         
@@ -2387,6 +2421,13 @@ class AmazonScraper(BaseScraper):
                     if date_match:
                         date_text = clean_text(date_match.group(1))
                         logger.info(f"Found listing date in detailBullets (ES): {date_text}")
+                        return date_text
+                    
+                    # 法语格式
+                    date_match = re.search(r'Date de mise en ligne sur Amazon\.fr\s*:\s*([^<]+)', text)
+                    if date_match:
+                        date_text = clean_text(date_match.group(1))
+                        logger.info(f"Found listing date in detailBullets (FR): {date_text}")
                         return date_text
         
         logger.info("Listing date not found")
@@ -2581,12 +2622,80 @@ class AmazonScraper(BaseScraper):
         ]
         
         # 首先尝试从当前价格（突出显示的价格）中提取
+        # 优先查找包含折扣信息的价格元素
         current_price_selectors = [
+            # 优先查找包含折扣信息的价格元素
+            '.a-section.a-spacing-none.aok-align-center .a-price.aok-align-center.reinventPricePriceToPayMargin.priceToPay',
+            # 查找包含折扣百分比的价格容器
+            '.a-section.a-spacing-none.aok-align-center.aok-relative .a-price',
             '.a-price.aok-align-center.reinventPricePriceToPayMargin.priceToPay',
             '.a-price[data-a-size="xl"][data-a-color="base"]',
             '.a-price.reinventPricePriceToPayMargin'
         ]
         
+        # 首先尝试查找包含折扣信息的价格容器
+        discount_price_containers = soup.select('.a-section.a-spacing-none.aok-align-center.aok-relative')
+        logger.info(f"Found {len(discount_price_containers)} discount price containers")
+        
+        for i, container in enumerate(discount_price_containers):
+            # 检查容器是否包含折扣信息
+            container_text = container.get_text()
+            if 'd\'économies' in container_text or 'savings' in container_text.lower():
+                logger.info(f"Found discount container {i+1} with text: {container_text[:100]}...")
+                # 在这个容器中查找价格元素
+                price_elements = container.select('.a-price')
+                logger.info(f"Found {len(price_elements)} price elements in discount container {i+1}")
+                
+                for j, element in enumerate(price_elements):
+                    logger.info(f"Discount price element {j+1} HTML: {str(element)}")
+                    # 检查是否是划线价格（原价），如果是则跳过
+                    if element.get('data-a-strike') == 'true' or 'a-text-price' in element.get('class', []):
+                        logger.info(f"Skipping strikethrough price element {j+1}")
+                        continue
+                    
+                    # 尝试从价格组件中组合价格
+                    price_symbol = element.select_one('.a-price-symbol')
+                    price_whole = element.select_one('.a-price-whole')
+                    price_fraction = element.select_one('.a-price-fraction')
+                    
+                    if price_symbol and price_whole:
+                        symbol = clean_text(price_symbol.get_text())
+                        whole = clean_text(price_whole.get_text())
+                        fraction = clean_text(price_fraction.get_text()) if price_fraction else ""
+                        
+                        logger.info(f"Discount price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}'")
+                        
+                        if symbol and whole:
+                            # 处理欧元价格格式（保留原始格式）
+                            if symbol == '€':
+                                # 对于欧元，保留原始格式（使用逗号作为小数分隔符）
+                                if fraction:
+                                    if ',' in whole:
+                                        # whole部分包含逗号，保持原样
+                                        price = f"{whole}{fraction}{symbol}"
+                                    elif '.' in whole:
+                                        # whole部分包含点号，替换为逗号
+                                        price = f"{whole.replace('.', ',')}{fraction}{symbol}"
+                                    else:
+                                        # whole部分不包含分隔符，添加逗号
+                                        price = f"{whole},{fraction}{symbol}"
+                                else:
+                                    price = f"{whole}{symbol}"
+                                logger.info(f"Found discount EUR price: {price}")
+                                return price
+                            # 处理美元价格格式（$4.27）
+                            elif symbol == '$':
+                                # 清理whole部分，移除多余的点
+                                whole = whole.replace('.', '')
+                                if fraction:
+                                    price = f"{symbol}{whole}.{fraction}"
+                                else:
+                                    price = f"{symbol}{whole}"
+                                logger.info(f"Found discount USD price: {price}")
+                                # 清理价格文本
+                                cleaned_price = self._clean_price_text(price)
+                                return cleaned_price
+
         for selector in current_price_selectors:
             current_price_elements = soup.select(selector)
             logger.info(f"Found {len(current_price_elements)} current price elements with selector: {selector}")
@@ -2611,19 +2720,21 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}'")
                     
                     if symbol and whole:
-                        # 处理欧元价格格式（4.27 €）
+                        # 处理欧元价格格式（保留原始格式）
                         if symbol == '€':
-                            # 对于欧元，将逗号转换为点号作为小数分隔符
+                            # 对于欧元，保留原始格式（使用逗号作为小数分隔符）
                             if fraction:
                                 if ',' in whole:
-                                    # whole部分包含逗号，替换为点号
-                                    whole = whole.replace(',', '.')
-                                    price = f"{whole}{fraction} {symbol}"
+                                    # whole部分包含逗号，保持原样
+                                    price = f"{whole}{fraction}{symbol}"
+                                elif '.' in whole:
+                                    # whole部分包含点号，替换为逗号
+                                    price = f"{whole.replace('.', ',')}{fraction}{symbol}"
                                 else:
-                                    # whole部分不包含逗号，添加点号
-                                    price = f"{whole}.{fraction} {symbol}"
+                                    # whole部分不包含分隔符，添加逗号
+                                    price = f"{whole},{fraction}{symbol}"
                             else:
-                                price = f"{whole} {symbol}"
+                                price = f"{whole}{symbol}"
                             logger.info(f"Found EUR price from selector {selector}: {price}")
                             return price
                         # 处理美元价格格式（$4.27）
@@ -2674,19 +2785,23 @@ class AmazonScraper(BaseScraper):
             # 对于欧元价格，优先选择不包含额外信息的价格（如折扣信息）
             eur_prices = [price for price in other_currency_prices if '€' in price]
             if eur_prices:
-                # 优先选择不包含 "mit"、"UVP"、"Einsparungen" 等额外信息的价格
-                clean_eur_prices = [price for price in eur_prices if not any(keyword in price for keyword in ['mit', 'UVP', 'Einsparungen', 'Prozent'])]
+                # 优先选择不包含额外信息的价格（保留原始格式）
+                clean_eur_prices = [price for price in eur_prices if not any(keyword in price for keyword in ['mit', 'UVP', 'Einsparungen', 'Prozent', 'avec', 'd\'économies'])]
                 if clean_eur_prices:
                     selected_price = clean_eur_prices[0]
-                    # 将欧元价格中的逗号转换为点号
-                    selected_price = selected_price.replace(',', '.')
+                    # 保留欧元价格的原始格式（逗号分隔符）
                     logger.info(f"Selected clean EUR price: {selected_price}")
                     return selected_price
                 else:
-                    # 如果没有干净的价格，选择第一个欧元价格
+                    # 如果没有干净的价格，选择第一个欧元价格并清理
                     selected_price = eur_prices[0]
-                    # 将欧元价格中的逗号转换为点号
-                    selected_price = selected_price.replace(',', '.')
+                    # 从包含折扣信息的文本中提取纯价格
+                    if 'avec' in selected_price and 'd\'économies' in selected_price:
+                        # 提取 "1,62 € avec 11 % d'économies" 中的 "1,62 €"
+                        import re
+                        price_match = re.search(r'([0-9,]+)\s*€', selected_price)
+                        if price_match:
+                            selected_price = price_match.group(1) + '€'
                     logger.info(f"Selected first EUR price: {selected_price}")
                     return selected_price
             else:
@@ -2733,18 +2848,21 @@ class AmazonScraper(BaseScraper):
             logger.info(f"Price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}'")
             
             if symbol and whole:
-                # 处理欧元价格格式（4.27 €）
+                # 处理欧元价格格式（保留原始格式）
                 if symbol == '€':
                     if fraction:
                         if ',' in whole:
-                            # whole部分包含逗号，替换为点号
-                            whole = whole.replace(',', '.')
-                            price = f"{whole}{fraction} {symbol}"
+                            # whole部分包含逗号，保持原样
+                            price = f"{whole}{fraction}{symbol}"
+                        elif '.' in whole:
+                            # whole部分包含点号，移除点号并添加逗号
+                            whole_clean = whole.replace('.', '')
+                            price = f"{whole_clean},{fraction}{symbol}"
                         else:
-                            # whole部分不包含逗号，添加点号
-                            price = f"{whole}.{fraction} {symbol}"
+                            # whole部分不包含分隔符，添加逗号
+                            price = f"{whole},{fraction}{symbol}"
                     else:
-                        price = f"{whole} {symbol}"
+                        price = f"{whole}{symbol}"
                     logger.info(f"Found EUR price from components: {price}")
                     return price
                 # 处理美元价格格式（$4.27）
