@@ -46,7 +46,7 @@ class BaseScraper:
             await self.session.close()
             self.session = None
     
-    def get_headers(self) -> Dict[str, str]:
+    def get_headers(self, country: str = None) -> Dict[str, str]:
         """获取请求头"""
         # 使用更真实的浏览器User-Agent
         user_agents = [
@@ -57,10 +57,27 @@ class BaseScraper:
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
         ]
         
+        # 根据国家设置不同的Accept-Language
+        if country == "DE":
+            accept_language = 'de-DE,de;q=0.9,en;q=0.8'
+            cf_ip_country = 'DE'
+        elif country == "CA":
+            accept_language = 'en-CA,en;q=0.9,fr;q=0.8'
+            cf_ip_country = 'CA'
+        elif country == "UK":
+            accept_language = 'en-GB,en;q=0.9'
+            cf_ip_country = 'GB'
+        elif country == "MX":
+            accept_language = 'es-MX,es;q=0.9,en;q=0.8'
+            cf_ip_country = 'MX'
+        else:
+            accept_language = 'en-US,en;q=0.9'
+            cf_ip_country = 'US'
+        
         return {
             'User-Agent': random.choice(user_agents),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Language': accept_language,
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
@@ -69,13 +86,13 @@ class BaseScraper:
             'Sec-Fetch-Site': 'none',
             'Sec-Fetch-User': '?1',
             'Cache-Control': 'max-age=0',
-            # 添加地理位置相关头部，模拟美国用户
-            'CF-IPCountry': 'US',
+            # 添加地理位置相关头部
+            'CF-IPCountry': cf_ip_country,
             'X-Forwarded-For': '192.168.1.1',
             'X-Real-IP': '192.168.1.1',
         }
     
-    async def fetch_page(self, url: str, max_retries: int = None, cookies: dict = None) -> Optional[str]:
+    async def fetch_page(self, url: str, max_retries: int = None, cookies: dict = None, country: str = None) -> Optional[str]:
         """
         获取页面内容
         """
@@ -87,7 +104,7 @@ class BaseScraper:
                 if not self.session:
                     await self.create_session()
                 
-                headers = self.get_headers()
+                headers = self.get_headers(country)
                 logger.info(f"Fetching URL: {url} (attempt {attempt + 1})")
                 
                 # 添加随机延迟避免被检测

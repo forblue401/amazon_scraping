@@ -102,6 +102,34 @@ class AmazonScraper(BaseScraper):
             'aws-target-zip-code': 'EC1A 1BB'
         }
     
+    def _get_de_delivery_cookies(self) -> dict:
+        """获取德国配送地址的Cookie设置"""
+        return {
+            # 德国配送地址Cookie设置
+            'i18n-prefs': 'EUR',
+            'lc-main': 'de_DE',
+            'session-id': '144-8192884-2975745',
+            'session-id-time': '2082787201l',
+            'ubid-main': '130-4907599-8762048',
+            # 德国柏林配送地址
+            'aws-target-data': '{"countryOfResidence":"DE","region":"Berlin","city":"Berlin","postalCode":"10115","countryCode":"DE"}',
+            'aws-target-address': '{"countryOfResidence":"DE","region":"Berlin","city":"Berlin","postalCode":"10115","countryCode":"DE"}',
+            'aws-target-location': '{"countryOfResidence":"DE","region":"Berlin","city":"Berlin","postalCode":"10115","countryCode":"DE"}',
+            'aws-target-delivery': '{"countryOfResidence":"DE","region":"Berlin","city":"Berlin","postalCode":"10115","countryCode":"DE"}',
+            'aws-target-locale': 'de-DE',
+            'aws-target-currency': 'EUR',
+            'aws-target-timezone': 'Europe/Berlin',
+            'aws-target-country': 'DE',
+            'aws-target-region': 'Berlin',
+            'aws-target-city': 'Berlin',
+            'aws-target-postal': '10115',
+            'aws-target-zip': '10115',
+            'aws-target-state': 'Berlin',
+            'aws-target-city-state': 'Berlin, Berlin',
+            'aws-target-postal-code': '10115',
+            'aws-target-zip-code': '10115'
+        }
+    
     async def scrape_product(self, asin: str, country: str) -> Dict[str, Any]:
         """
         爬取产品信息（两阶段）
@@ -138,13 +166,16 @@ class AmazonScraper(BaseScraper):
         # 为不同国家设置配送地址Cookie
         if country == "US":
             us_cookies = self._get_us_delivery_cookies()
-            content = await self.fetch_page(url, cookies=us_cookies)
+            content = await self.fetch_page(url, cookies=us_cookies, country=country)
         elif country == "CA":
             ca_cookies = self._get_ca_delivery_cookies()
-            content = await self.fetch_page(url, cookies=ca_cookies)
+            content = await self.fetch_page(url, cookies=ca_cookies, country=country)
         elif country == "UK":
             uk_cookies = self._get_uk_delivery_cookies()
-            content = await self.fetch_page(url, cookies=uk_cookies)
+            content = await self.fetch_page(url, cookies=uk_cookies, country=country)
+        elif country == "DE":
+            de_cookies = self._get_de_delivery_cookies()
+            content = await self.fetch_page(url, cookies=de_cookies, country=country)
         else:
             # 暂时不使用cookie，避免影响页面内容
             content = await self.fetch_with_delay(url)
@@ -461,12 +492,42 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Found coupon text from text search: {coupon_text}")
                     return coupon_text
 
+        # 方法5：德国亚马逊格式 - 查找 "Coupon" 相关文本
+        german_coupon_spans = soup.select('span.couponLabelText, span[id*="couponText"]')
+        logger.info(f"Found {len(german_coupon_spans)} German coupon span elements")
+
+        for i, span in enumerate(german_coupon_spans):
+            text = clean_text(span.get_text())
+            logger.info(f"German coupon span {i+1}: {text}")
+
+            # 查找包含 "Coupon"、"anwenden"、"voucher" 或 "Apply" 的文本
+            if any(keyword in text.lower() for keyword in ['coupon', 'anwenden', 'voucher', 'apply']):
+                # 提取优惠券金额和文本
+                coupon_text = re.sub(r'\s+', ' ', text).strip()
+                logger.info(f"Found German coupon text from span: {coupon_text}")
+                return coupon_text
+
+        # 方法6：更广泛的德语优惠券搜索
+        german_coupon_texts = soup.find_all(text=re.compile(r'(gutschein|rabatt|sparen|coupon)', re.IGNORECASE))
+        logger.info(f"Found {len(german_coupon_texts)} elements containing German coupon keywords")
+
+        for i, text_element in enumerate(german_coupon_texts):
+            text = clean_text(text_element)
+            if len(text) < 100:  # 只处理较短的文本，避免JavaScript代码
+                logger.info(f"German coupon text {i+1}: {text}")
+
+                # 查找包含欧元符号和德语关键词的文本
+                if re.search(r'€', text) and any(keyword in text.lower() for keyword in ['gutschein', 'rabatt', 'sparen', 'coupon']):
+                    coupon_text = re.sub(r'\s+', ' ', text).strip()
+                    logger.info(f"Found German coupon text: {coupon_text}")
+                    return coupon_text
+
         logger.info("No coupon text found")
         return None
     
     def _extract_discount_rate(self, soup: BeautifulSoup) -> Optional[str]:
         """提取折扣比率（绿色背景标签中的折扣）"""
-        logger.info("Searching for discount rate...")
+        logger.info("Starting discount rate extraction...")
         
         discount_rates = []
         
@@ -534,6 +595,7 @@ class AmazonScraper(BaseScraper):
                 else:
                     # 调试：检查为什么没有匹配到
                     if 'Ahorra' in text:
+                        
                         logger.info(f"Debug: 'Ahorra' found in text but no match: '{text}'")
                         logger.info(f"Debug: Text length: {len(text)}")
                         logger.info(f"Debug: Text repr: {repr(text)}")
@@ -545,9 +607,47 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Found Spanish discount 'Hasta': {rate}")
                     if rate not in discount_rates:
                         discount_rates.append(rate)
-                        logger.info(f"Added 'Hasta' to discount_rates: {rate}, current list: {discount_rates}")
+                
+                # 匹配德语 "Spare X%" 格式
+                spare_match = re.search(r'Spare\s+(\d+)\s*%', text)
+                if spare_match:
+                    rate = f"{spare_match.group(1)}%"
+                    logger.info(f"Found German discount 'Spare': {rate}")
+                    if rate not in discount_rates:
+                        discount_rates.append(rate)
+                
+                # 匹配德语 "Ersparnis X%" 格式
+                ersparnis_match = re.search(r'Ersparnis\s+(\d+)\s*%', text)
+                if ersparnis_match:
+                    rate = f"{ersparnis_match.group(1)}%"
+                    logger.info(f"Found German discount 'Ersparnis': {rate}")
+                    if rate not in discount_rates:
+                        discount_rates.append(rate)
+                        logger.info(f"Added 'Ersparnis' to discount_rates: {rate}, current list: {discount_rates}")
                     else:
-                        logger.info(f"'Hasta' rate already in discount_rates: {rate}")
+                        logger.info(f"'Ersparnis' rate already in discount_rates: {rate}")
+                
+                # 匹配德语 "-X %" 格式（负号在前）
+                negative_match = re.search(r'-(\d+)\s*%', text)
+                if negative_match:
+                    rate = f"{negative_match.group(1)}%"
+                    logger.info(f"Found German discount with negative sign: {rate}")
+                    if rate not in discount_rates:
+                        discount_rates.append(rate)
+                        logger.info(f"Added negative discount to discount_rates: {rate}, current list: {discount_rates}")
+                    else:
+                        logger.info(f"Negative discount rate already in discount_rates: {rate}")
+                
+                # 匹配德语 "Sparen: -X %" 格式
+                sparen_negative_match = re.search(r'Sparen:\s*-(\d+)\s*%', text)
+                if sparen_negative_match:
+                    rate = f"{sparen_negative_match.group(1)}%"
+                    logger.info(f"Found German discount 'Sparen: -X%': {rate}")
+                    if rate not in discount_rates:
+                        discount_rates.append(rate)
+                        logger.info(f"Added 'Sparen: -X%' to discount_rates: {rate}, current list: {discount_rates}")
+                    else:
+                        logger.info(f"'Sparen: -X%' rate already in discount_rates: {rate}")
                 else:
                     # 调试：检查为什么没有匹配到
                     if 'Hasta' in text and '%' in text and 'más' in text:
@@ -610,6 +710,28 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Added 'Hasta' to discount_rates in method2: {rate}, current list: {discount_rates}")
                 else:
                     logger.info(f"'Hasta' rate already in discount_rates in method2: {rate}")
+            
+            # 查找德语 "-X %" 格式（负号在前）
+            negative_match = re.search(r'-(\d+)\s*%', text)
+            if negative_match:
+                rate = f"{negative_match.group(1)}%"
+                logger.info(f"Found German discount with negative sign in green element: {rate}")
+                if rate not in discount_rates:
+                    discount_rates.append(rate)
+                    logger.info(f"Added negative discount to discount_rates in method2: {rate}, current list: {discount_rates}")
+                else:
+                    logger.info(f"Negative discount rate already in discount_rates in method2: {rate}")
+            
+            # 查找德语 "Sparen: -X %" 格式
+            sparen_negative_match = re.search(r'Sparen:\s*-(\d+)\s*%', text)
+            if sparen_negative_match:
+                rate = f"{sparen_negative_match.group(1)}%"
+                logger.info(f"Found German discount 'Sparen: -X%' in green element: {rate}")
+                if rate not in discount_rates:
+                    discount_rates.append(rate)
+                    logger.info(f"Added 'Sparen: -X%' to discount_rates in method2: {rate}, current list: {discount_rates}")
+                else:
+                    logger.info(f"'Sparen: -X%' rate already in discount_rates in method2: {rate}")
         
         # 方法3：查找包含折扣关键词的绿色背景文本（多语言支持）
         discount_keywords = [
@@ -649,6 +771,28 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Added 'Ahorra' from promo div to discount_rates: {rate}, current list: {discount_rates}")
                 else:
                     logger.info(f"'Ahorra' rate from promo div already in discount_rates: {rate}")
+            
+            # 查找德语 "-X %" 格式（负号在前）
+            negative_match = re.search(r'-(\d+)\s*%', text)
+            if negative_match:
+                rate = f"{negative_match.group(1)}%"
+                logger.info(f"Found German discount with negative sign in promo div: {rate}")
+                if rate not in discount_rates:
+                    discount_rates.append(rate)
+                    logger.info(f"Added negative discount from promo div to discount_rates: {rate}, current list: {discount_rates}")
+                else:
+                    logger.info(f"Negative discount rate from promo div already in discount_rates: {rate}")
+            
+            # 查找德语 "Sparen: -X %" 格式
+            sparen_negative_match = re.search(r'Sparen:\s*-(\d+)\s*%', text)
+            if sparen_negative_match:
+                rate = f"{sparen_negative_match.group(1)}%"
+                logger.info(f"Found German discount 'Sparen: -X%' in promo div: {rate}")
+                if rate not in discount_rates:
+                    discount_rates.append(rate)
+                    logger.info(f"Added 'Sparen: -X%' from promo div to discount_rates: {rate}, current list: {discount_rates}")
+                else:
+                    logger.info(f"'Sparen: -X%' rate from promo div already in discount_rates: {rate}")
         for keyword in discount_keywords:
             elements = soup.find_all(text=lambda text: text and keyword in text.lower())
             logger.info(f"Found {len(elements)} elements containing '{keyword}'")
@@ -814,6 +958,31 @@ class AmazonScraper(BaseScraper):
         ]
         
         return any(keyword in text_lower for keyword in shipping_keywords)
+    
+    def _clean_price_text(self, price_text: str) -> str:
+        """清理价格文本，只保留价格部分"""
+        if not price_text:
+            return price_text
+        
+        import re
+        
+        # 匹配各种价格格式
+        price_patterns = [
+            r'[€$£¥]\s*\d+\.?\d*',  # 货币符号 + 数字
+            r'\d+\.?\d*\s*[€$£¥]',  # 数字 + 货币符号
+            r'[€$£¥]\d+\.?\d*',     # 货币符号直接连数字
+        ]
+        
+        for pattern in price_patterns:
+            match = re.search(pattern, price_text)
+            if match:
+                cleaned = match.group(0).strip()
+                logger.info(f"Cleaned price from '{price_text}' to '{cleaned}'")
+                return cleaned
+        
+        # 如果没有匹配到标准格式，返回原文本
+        logger.info(f"No price pattern matched for: {price_text}")
+        return price_text
     
     def _extract_shipping_method(self, soup: BeautifulSoup) -> Optional[str]:
         """提取发货方式"""
@@ -1043,7 +1212,7 @@ class AmazonScraper(BaseScraper):
             logger.info(f"Found {len(merchant_info_divs)} desktop-merchant-info divs")
             
             for i, div in enumerate(merchant_info_divs):
-                logger.info(f"Merchant info div {i+1}: {div.get_text()[:100]}...")
+                logger.info(f"Merchant info div {i+1}: {div.get_text()[:200]}...")
                 # 查找包含商家名称的链接
                 seller_links = div.select('a[id="sellerProfileTriggerId"]')
                 logger.info(f"Found {len(seller_links)} sellerProfileTriggerId links in div {i+1}")
@@ -1055,6 +1224,50 @@ class AmazonScraper(BaseScraper):
                         seller_name = text
                         logger.info(f"Found seller name from desktop-merchant-info: {seller_name}")
                         break
+                
+                # 如果没找到链接，尝试从文本中提取 "Sold by" 信息
+                if not seller_name:
+                    div_text = div.get_text()
+                    logger.info(f"Checking div text for 'Sold by': {div_text[:200]}...")
+                    if 'Sold by' in div_text:
+                        # 查找 "Sold by" 后面的商家名称
+                        import re
+                        sold_by_match = re.search(r'Sold by\s+([^,\n\s]+)', div_text)
+                        if sold_by_match:
+                            potential_seller = clean_text(sold_by_match.group(1))
+                            logger.info(f"Potential seller from regex: '{potential_seller}'")
+                            # 过滤掉明显不是商家名称的文本，但允许 "Amazon" 作为商家名称
+                            if potential_seller and not any(keyword in potential_seller.lower() for keyword in [
+                                'returnable', 'within', 'days', 'receipt', 'shipping', 'delivery'
+                            ]):
+                                seller_name = potential_seller
+                                logger.info(f"Found seller name from 'Sold by' text: {seller_name}")
+                                break
+                        else:
+                            logger.info(f"No regex match for 'Sold by' in text: {div_text[:100]}")
+                    
+                    # 如果没找到 "Sold by"，尝试查找德语格式 "Amazon Verkäufer Amazon"
+                    if not seller_name:
+                        logger.info(f"Checking div {i+1} for German pattern: Amazon in text: {'Amazon' in div_text}, Verkäufer in text: {'Verkäufer' in div_text}")
+                        if 'Amazon' in div_text and 'Verkäufer' in div_text:
+                            logger.info(f"Found Amazon and Verkäufer in div {i+1}")
+                            import re
+                            # 查找 "Amazon Verkäufer Amazon" 模式
+                            amazon_verkaeufer_match = re.search(r'Amazon\s+Verkäufer\s+Amazon', div_text)
+                            if amazon_verkaeufer_match:
+                                seller_name = 'Amazon'
+                                logger.info(f"Found German seller name from Amazon Verkäufer pattern: {seller_name}")
+                                break
+                            # 查找 "Amazon" 和 "Verkäufer" 之间的文本
+                            amazon_verkaeufer_match = re.search(r'Amazon\s+Verkäufer\s+([^,\n\s]+)', div_text)
+                            if amazon_verkaeufer_match:
+                                potential_seller = clean_text(amazon_verkaeufer_match.group(1))
+                                logger.info(f"Found Amazon seller from regex: '{potential_seller}'")
+                                if potential_seller and potential_seller.lower() == 'amazon':
+                                    seller_name = 'Amazon'
+                                    logger.info(f"Found German seller name: {seller_name}")
+                                    break
+                
                 if seller_name:
                     break
             
@@ -1083,8 +1296,94 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Seller help link {i+1}: text='{text}', href='{href}'")
                     if text and text.strip() != "Amazon" and len(text) > 2:
                         seller_name = text
-                        logger.info(f"Found seller name from seller help link: {seller_name}")
+                        logger.info(f"Found seller name from /gp/help/seller/: {seller_name}")
                         break
+            
+            # 如果还没找到，尝试查找德语格式的卖家信息
+            if not seller_name:
+                logger.info("Trying to find German seller information...")
+                
+                # 首先检查 desktop-merchant-info 中是否包含 "Amazon Verkäufer" 模式
+                for i, div in enumerate(merchant_info_divs):
+                    div_text = div.get_text()
+                    logger.info(f"Checking merchant info div {i+1} for German pattern: {div_text[:200]}...")
+                    if 'Amazon' in div_text and 'Verkäufer' in div_text:
+                        logger.info(f"Found Amazon and Verkäufer in div {i+1}")
+                        import re
+                        # 查找 "Amazon Verkäufer Amazon" 模式
+                        amazon_verkaeufer_match = re.search(r'Amazon\s+Verkäufer\s+Amazon', div_text)
+                        if amazon_verkaeufer_match:
+                            seller_name = 'Amazon'
+                            logger.info(f"Found German seller name from Amazon Verkäufer pattern: {seller_name}")
+                            break
+                        # 查找 "Amazon" 和 "Verkäufer" 之间的文本
+                        amazon_verkaeufer_match = re.search(r'Amazon\s+Verkäufer\s+([^,\n\s]+)', div_text)
+                        if amazon_verkaeufer_match:
+                            potential_seller = clean_text(amazon_verkaeufer_match.group(1))
+                            logger.info(f"Found Amazon seller from regex: '{potential_seller}'")
+                            if potential_seller and potential_seller.lower() == 'amazon':
+                                seller_name = 'Amazon'
+                                logger.info(f"Found German seller name: {seller_name}")
+                                break
+                
+                # 如果还没找到，尝试查找包含 "Amazon" 和 "Verkäufer" 的元素
+                if not seller_name:
+                    amazon_verkaeufer_elements = soup.find_all(text=lambda text: text and 'Amazon' in text and 'Verkäufer' in text)
+                    logger.info(f"Found {len(amazon_verkaeufer_elements)} elements containing both 'Amazon' and 'Verkäufer'")
+                    
+                    for i, element in enumerate(amazon_verkaeufer_elements):
+                        logger.info(f"Amazon+Verkäufer element {i+1}: {element.strip()}")
+                        parent = element.parent
+                        if parent:
+                            parent_text = parent.get_text()
+                            logger.info(f"Checking parent text: {parent_text[:200]}...")
+                            import re
+                            # 查找 "Amazon" 和 "Verkäufer" 之间的文本
+                            amazon_verkaeufer_match = re.search(r'Amazon\s+Verkäufer\s+([^,\n\s]+)', parent_text)
+                            if amazon_verkaeufer_match:
+                                potential_seller = clean_text(amazon_verkaeufer_match.group(1))
+                                logger.info(f"Found Amazon seller from regex: '{potential_seller}'")
+                                if potential_seller and potential_seller.lower() == 'amazon':
+                                    seller_name = 'Amazon'
+                                    logger.info(f"Found German seller name: {seller_name}")
+                                    break
+                
+                # 如果还没找到，尝试查找所有包含 "Verkäufer" 的文本
+                if not seller_name:
+                    verkaeufer_elements = soup.find_all(text=lambda text: text and 'Verkäufer' in text)
+                    logger.info(f"Found {len(verkaeufer_elements)} elements containing 'Verkäufer'")
+                    for i, element in enumerate(verkaeufer_elements):
+                        logger.info(f"Verkäufer element {i+1}: {element.strip()}")
+                        # 查找父元素中的链接或文本
+                        parent = element.parent
+                        if parent:
+                            # 查找同级的链接
+                            links = parent.find_all('a')
+                            for link in links:
+                                text = clean_text(link.get_text())
+                                if text and text != "Verkäufer" and len(text) > 2:
+                                    seller_name = text
+                                    logger.info(f"Found German seller name from Verkäufer: {seller_name}")
+                                    break
+                            if seller_name:
+                                break
+                            
+                            # 如果没找到链接，尝试从文本中提取
+                            if not seller_name:
+                                parent_text = parent.get_text()
+                                logger.info(f"Checking parent text for seller: {parent_text[:200]}...")
+                                import re
+                                # 查找 "Verkäufer" 后面的商家名称
+                                verkaeufer_match = re.search(r'Verkäufer\s+([^,\n\s]+)', parent_text)
+                                if verkaeufer_match:
+                                    potential_seller = clean_text(verkaeufer_match.group(1))
+                                    logger.info(f"Potential German seller from regex: '{potential_seller}'")
+                                    if potential_seller and not any(keyword in potential_seller.lower() for keyword in [
+                                        'rückgaben', 'returnable', 'within', 'days', 'receipt', 'shipping', 'delivery', 'nicht', 'verfügbar'
+                                    ]):
+                                        seller_name = potential_seller
+                                        logger.info(f"Found German seller name from 'Verkäufer': {seller_name}")
+                                        break
             
             # 调试：查看页面上是否有类似的卖家相关元素
             if not seller_name:
@@ -1283,6 +1582,7 @@ class AmazonScraper(BaseScraper):
     
     def _extract_rating(self, soup: BeautifulSoup) -> Optional[str]:
         """提取评分"""
+        logger.info("Starting rating extraction...")
         # 方法1：查找评分数字（如 5.0）
         rating_span = soup.select_one('span.a-size-base.a-color-base[aria-hidden="true"]')
         if rating_span:
@@ -1311,6 +1611,40 @@ class AmazonScraper(BaseScraper):
                     if rating:
                         return rating
         
+        # 方法3：查找德国亚马逊表格结构中的评分
+        # 查找包含"Durchschnittliche Kundenbewertung"的表格行
+        rating_table_rows = soup.select('tr')
+        logger.info(f"Found {len(rating_table_rows)} table rows for rating search")
+        for row in rating_table_rows:
+            th = row.select_one('th')
+            if th and 'Durchschnittliche Kundenbewertung' in th.get_text():
+                logger.info(f"Found rating table row: {th.get_text()}")
+                td = row.select_one('td')
+                if td:
+                    # 在td中查找评分信息
+                    rating_text = td.get_text()
+                    logger.info(f"Rating table td text: {rating_text[:200]}...")
+                    # 查找德语格式的评分，如 "4,3 von 5 Sternen"
+                    import re
+                    rating_match = re.search(r'(\d+,\d+)\s+von\s+5\s+Sternen', rating_text)
+                    if rating_match:
+                        # 将德语格式的逗号转换为点号
+                        rating = rating_match.group(1).replace(',', '.')
+                        logger.info(f"Found German rating from table: {rating}")
+                        return rating
+                    
+                    # 也查找纯数字格式
+                    rating_match = re.search(r'(\d+,\d+)', rating_text)
+                    if rating_match:
+                        rating = rating_match.group(1).replace(',', '.')
+                        try:
+                            rating_value = float(rating)
+                            if 0.0 <= rating_value <= 5.0:
+                                logger.info(f"Found German rating number from table: {rating}")
+                                return rating
+                        except ValueError:
+                            pass
+        
         # 如果没有找到明确的评分元素，返回None
         return None
     
@@ -1333,7 +1667,32 @@ class AmazonScraper(BaseScraper):
             if match:
                 return f"{match.group(1)} ratings"
         
-        # 方法3：查找其他可能的评论数量元素
+        # 方法3：查找德国亚马逊表格结构中的评论数量
+        # 查找包含"Durchschnittliche Kundenbewertung"的表格行
+        rating_table_rows = soup.select('tr')
+        for row in rating_table_rows:
+            th = row.select_one('th')
+            if th and 'Durchschnittliche Kundenbewertung' in th.get_text():
+                td = row.select_one('td')
+                if td:
+                    # 在td中查找评论数量信息
+                    reviews_text = td.get_text()
+                    # 查找德语格式的评论数量，如 "5.723 Sternebewertungen"
+                    import re
+                    reviews_match = re.search(r'(\d+\.?\d*)\s+Sternebewertungen', reviews_text)
+                    if reviews_match:
+                        reviews_count = reviews_match.group(1)
+                        logger.info(f"Found German reviews count from table: {reviews_count}")
+                        return f"{reviews_count} ratings"
+                    
+                    # 也查找其他格式
+                    reviews_match = re.search(r'(\d+\.?\d*)\s+Rezensionen', reviews_text)
+                    if reviews_match:
+                        reviews_count = reviews_match.group(1)
+                        logger.info(f"Found German reviews count (Rezensionen) from table: {reviews_count}")
+                        return f"{reviews_count} ratings"
+        
+        # 方法4：查找其他可能的评论数量元素
         reviews_text = self._extract_text_by_selectors(soup, [
             '.a-size-base.a-color-secondary',
             '[data-automation-id="reviews-count"]'
@@ -1392,6 +1751,27 @@ class AmazonScraper(BaseScraper):
                         brand = clean_text(second_td.get_text())
                         logger.info(f"Found brand from Spanish table: {brand}")
                         return brand
+        
+        # 方法2.2：查找德语表格形式的品牌信息（Marke）
+        logger.info(f"Checking {len(brand_rows)} rows for German brand (Marke)...")
+        for i, row in enumerate(brand_rows):
+            # 查找包含 "Marke" 的表格行
+            first_td = row.find('td', class_='a-span3')
+            if first_td:
+                first_td_text = clean_text(first_td.get_text())
+                logger.info(f"Row {i}: first_td_text = '{first_td_text}'")
+                if first_td_text == 'Marke':
+                    second_td = row.find('td', class_='a-span9')
+                    if second_td:
+                        brand = clean_text(second_td.get_text())
+                        logger.info(f"Found brand from German table: {brand}")
+                        return brand
+                    else:
+                        logger.info(f"Found 'Marke' but no second_td in row {i}")
+                else:
+                    logger.info(f"Row {i}: first_td_text '{first_td_text}' != 'Marke'")
+            else:
+                logger.info(f"Row {i}: no first_td with class 'a-span3'")
         
         # 方法3：查找其他可能的品牌选择器
         brand_text = self._extract_text_by_selectors(soup, [
@@ -1519,8 +1899,9 @@ class AmazonScraper(BaseScraper):
                 if detail_table:
                     logger.info("Searching in productDetails_detailBullets_sections1 table...")
                     for th in detail_table.select('th.a-color-secondary.a-size-base.prodDetSectionEntry'):
-                        if 'Best Sellers Rank' in th.get_text():
-                            logger.info(f"Found Best Sellers Rank th in productDetails: {th.get_text()}")
+                        th_text = th.get_text()
+                        if 'Best Sellers Rank' in th_text or 'Amazon Bestseller-Rang' in th_text or 'Bestseller-Rang' in th_text:
+                            logger.info(f"Found Best Sellers Rank th in productDetails: {th_text}")
                             td = th.find_next_sibling('td')
                             if td:
                                 logger.info(f"Found td element in productDetails: {str(td)[:200]}...")
@@ -1535,7 +1916,7 @@ class AmazonScraper(BaseScraper):
                             else:
                                 logger.info("No td found in productDetails")
                         else:
-                            logger.info(f"productDetails th does not contain 'Best Sellers Rank': {th.get_text()[:50]}...")
+                            logger.info(f"productDetails th does not contain 'Best Sellers Rank': {th_text[:50]}...")
             
             # 方法3：如果没找到，尝试查找包含"Best Sellers Rank"的li元素
             if not rank_li:
@@ -1640,10 +2021,20 @@ class AmazonScraper(BaseScraper):
                         text = li.get_text().strip()
                         if 'Best Sellers' in text or 'Rank' in text or '#' in text:
                             logger.info(f"Found potential rank in detailBullets LI {i+1}: {text[:200]}...")
+                            # 直接使用该 LI 作为排名元素，避免提前返回 None
+                            rank_li = li
+                            # 如果该 LI 内部包含 ul（子类目列表），记录下来
+                            inner_ul = li.select_one('ul.a-unordered-list')
+                            if inner_ul:
+                                rank_ul = inner_ul
+                                logger.info("Found inner UL inside detailBullets LI for ranks")
+                            break
                 else:
                     logger.info("detailBullets_feature_div not found")
                 
-                return None
+                # 尝试完 detailBullets 后仍未定位到 rank_li，则返回 None
+                if not rank_li:
+                    return None
             
             categories = []
             ranks = []
@@ -1670,10 +2061,13 @@ class AmazonScraper(BaseScraper):
                 # 改进的匹配模式：支持多种格式
                 # 英文格式：#数字 in 类目名 或 数字 in 类目名
                 # 西班牙语格式：nº数字 en 类目名
+                # 德国格式：Nr. 数字 in 类目名 或 Best Sellers Rank: 数字 in 类目名
                 patterns = [
                     r'#([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 英文格式（带#）
                     r'([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',   # 英文格式（不带#）
                     r'nº([0-9,]+)\s+en\s+([^<\(]+?)(?:\s*\(|$)',  # 西班牙语格式
+                    r'Nr\.\s*([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 德语格式（Nr. 数字 in 类目）
+                    r'Best Sellers Rank:\s*([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 德国格式
                 ]
                 
                 matches = []
@@ -1686,6 +2080,8 @@ class AmazonScraper(BaseScraper):
                         matches.extend(pattern_matches)
                         used_pattern = i
                         break
+                    else:
+                        logger.info(f"Pattern {i+1} '{pattern}' did not match text: '{main_rank_text[:100]}...'")
                 
                 # 如果标准模式匹配到错误结果，尝试更精确的模式
                 if matches and any(')' in match[1] for match in matches):
@@ -1694,6 +2090,8 @@ class AmazonScraper(BaseScraper):
                         r'#([0-9,]+)\s+in\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',  # 英文格式（带#，更精确）
                         r'([0-9,]+)\s+in\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',   # 英文格式（不带#，更精确）
                         r'nº([0-9,]+)\s+en\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',  # 西班牙语格式（更精确）
+                        r'Nr\.\s*([0-9,]+)\s+in\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',  # 德语格式（Nr. 数字 in 类目，更精确）
+                        r'Best Sellers Rank:\s*([0-9,]+)\s+in\s+([^<\(\)]+?)(?:\s*\([^)]*\)|$)',  # 德国格式（更精确）
                     ]
                     
                     new_matches = []
@@ -1709,6 +2107,37 @@ class AmazonScraper(BaseScraper):
                     if new_matches:
                         matches = new_matches
                 
+                # 特殊处理：德国亚马逊格式可能包含多个排名在同一行
+                # 例如："Best Sellers Rank: 4,290 in Fashion (See Top 100 in Fashion) 65 in Women's Coats"
+                if not matches and 'Best Sellers Rank:' in main_rank_text:
+                    logger.info("Processing German Amazon format with multiple ranks...")
+                    # 先提取主排名
+                    main_pattern = r'Best Sellers Rank:\s*([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\([^)]*\)|$)'
+                    main_match = re.search(main_pattern, main_rank_text)
+                    if main_match:
+                        matches.append((main_match.group(1), main_match.group(2)))
+                        logger.info(f"Found main rank: {main_match.group(1)} in {main_match.group(2)}")
+                    
+                    # 然后提取子排名（在括号后的部分）
+                    remaining_text = main_rank_text[main_match.end():] if main_match else main_rank_text
+                    # 查找所有 "数字 in 类目" 的模式
+                    sub_pattern = r'([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*$|$)'
+                    sub_matches = re.findall(sub_pattern, remaining_text)
+                    for sub_match in sub_matches:
+                        if sub_match[1].strip():  # 确保类目名不为空
+                            matches.append(sub_match)
+                            logger.info(f"Found sub rank: {sub_match[0]} in {sub_match[1]}")
+                
+                # 如果还是没有匹配到，尝试更简单的模式
+                if not matches and 'Best Sellers Rank:' in main_rank_text:
+                    logger.info("Trying simpler pattern for German Amazon format...")
+                    # 使用更简单的模式：直接匹配 "数字 in 类目"
+                    simple_pattern = r'([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)'
+                    simple_matches = re.findall(simple_pattern, main_rank_text)
+                    if simple_matches:
+                        matches = simple_matches
+                        logger.info(f"Found {len(matches)} matches with simple pattern: {matches}")
+                
                 # 如果标准模式没有匹配到，尝试更宽松的模式
                 if not matches:
                     logger.info("Trying more flexible patterns...")
@@ -1717,7 +2146,7 @@ class AmazonScraper(BaseScraper):
                         r'([0-9,]+)\s+in\s+([^<]+?)(?:\s*\([^)]*\)|$)',   # 英文格式（不带#，更宽松）
                         r'nº([0-9,]+)\s+en\s+([^<]+?)(?:\s*\([^)]*\)|$)',  # 西班牙语格式（更宽松）
                     ]
-                    
+                                      
                     for i, pattern in enumerate(flexible_patterns):
                         pattern_matches = re.findall(pattern, main_rank_text)
                         logger.info(f"Flexible pattern {i+1} '{pattern}' found {len(pattern_matches)} matches: {pattern_matches}")
@@ -1728,18 +2157,40 @@ class AmazonScraper(BaseScraper):
                             break
                 
                 for rank, category in matches:
-                    rank_clean = rank.replace(',', '')
+                    rank_clean = rank.replace(',', '').replace('.', '')
                     category_clean = category.strip()
                     if category_clean and not category_clean.startswith('See Top'):
-                        # 根据使用的模式确定排名格式
-                        if used_pattern == 0:  # 带#的英文格式
-                            rank_format = f"#{rank_clean}"
-                        elif used_pattern == 1:  # 不带#的英文格式
-                            rank_format = f"#{rank_clean}"  # 统一添加#
-                        elif used_pattern == 2:  # 西班牙语格式
-                            rank_format = f"nº{rank_clean}"
-                        else:
-                            rank_format = f"#{rank_clean}"  # 默认格式
+                        # 从原始文本中提取完整的排名格式，保留原始符号
+                        import re
+                        original_text = main_rank_text
+                        
+                        # 查找原始文本中对应的完整排名格式
+                        full_rank_patterns = [
+                            r'#([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 英文格式（带#）
+                            r'([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',   # 英文格式（不带#）
+                            r'nº\s*([0-9,]+)\s+en\s+([^<\(]+?)(?:\s*\(|$)',  # 西班牙语格式
+                            r'Nr\.\s*([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 德语格式
+                            r'Best Sellers Rank:\s*([0-9,]+)\s+in\s+([^<\(]+?)(?:\s*\(|$)',  # 德国格式
+                        ]
+                        
+                        rank_format = f"{rank_clean}"  # 默认格式
+                        for pattern in full_rank_patterns:
+                            # 查找完整的排名格式（包含符号）
+                            full_matches = re.findall(pattern, original_text)
+                            for match_rank, match_category in full_matches:
+                                if match_rank.replace(',', '').replace('.', '') == rank_clean and match_category.strip() == category_clean:
+                                    # 从原始文本中提取完整的排名格式
+                                    if '#' in pattern:
+                                        rank_format = f"#{match_rank.replace(',', '').replace('.', '')}"
+                                    elif 'nº' in pattern:
+                                        rank_format = f"nº {match_rank.replace(',', '').replace('.', '')}"
+                                    elif 'Nr\.' in pattern:
+                                        rank_format = f"Nr. {match_rank.replace(',', '').replace('.', '')}"
+                                    else:
+                                        rank_format = f"{match_rank.replace(',', '').replace('.', '')}"
+                                    break
+                            if rank_format != f"{rank_clean}":  # 如果找到了匹配的格式，跳出循环
+                                break
                         
                         categories.append(category_clean)
                         ranks.append(rank_format)
@@ -1752,6 +2203,11 @@ class AmazonScraper(BaseScraper):
             
             # 查找子类目（在ul.zg_hrsr中）
             sub_ul = None
+            logger.info(f"rank_li: {rank_li}")
+            if rank_li:
+                logger.info(f"rank_li.name: {rank_li.name}")
+                logger.info(f"rank_li.text: {rank_li.get_text()[:200]}...")
+            
             if rank_li and rank_li.name == 'ul':
                 # 如果rank_li本身就是ul，直接使用
                 sub_ul = rank_li
@@ -1761,6 +2217,8 @@ class AmazonScraper(BaseScraper):
                 sub_ul = rank_li.select_one('ul.zg_hrsr') if rank_li else None
                 if sub_ul:
                     logger.info(f"Found sub_ul with {len(sub_ul.select('li'))} li elements")
+                else:
+                    logger.info("No sub_ul found in rank_li")
             
             if sub_ul:
                 sub_items = sub_ul.select('li span.a-list-item')
@@ -1770,21 +2228,26 @@ class AmazonScraper(BaseScraper):
                     # 处理HTML实体
                     item_text = item_text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
                     # 支持英文和西班牙语格式（带#和不带#）
-                    sub_matches = re.findall(r'#([0-9,]+)\s+in\s+([^<]+)|([0-9,]+)\s+in\s+([^<]+)|nº([0-9,]+)\s+en\s+([^<]+)', item_text)
+                    sub_matches = re.findall(r'#([0-9,\.]+)\s+in\s+([^<]+)|([0-9,\.]+)\s+in\s+([^<]+)|nº\s*([0-9,\.]+)\s+en\s+([^<]+)|Nr\.\s*([0-9,\.]+)\s+in\s+([^<]+)', item_text)
+                    logger.info(f"Processing sub item text: '{item_text}'")
+                    logger.info(f"Found {len(sub_matches)} sub matches: {sub_matches}")
                     for match in sub_matches:
                         if match[0] and match[1]:  # 英文格式（带#）
                             rank, category = match[0], match[1]
-                            rank_format = f"#{rank.replace(',', '')}"
+                            rank_format = f"{rank.replace(',', '').replace('.', '')}"
                         elif match[2] and match[3]:  # 英文格式（不带#）
                             rank, category = match[2], match[3]
-                            rank_format = f"#{rank.replace(',', '')}"  # 统一添加#
+                            rank_format = f"{rank.replace(',', '').replace('.', '')}"
                         elif match[4] and match[5]:  # 西班牙语格式
                             rank, category = match[4], match[5]
-                            rank_format = f"nº{rank.replace(',', '')}"
+                            rank_format = f"nº {rank.replace(',', '').replace('.', '')}"
+                        elif match[6] and match[7]:  # 德语格式 Nr.
+                            rank, category = match[6], match[7]
+                            rank_format = f"Nr. {rank.replace(',', '').replace('.', '')}"
                         else:
                             continue
                             
-                        rank_clean = rank.replace(',', '')
+                        rank_clean = rank.replace(',', '').replace('.', '')
                         category_clean = category.strip()
                         # 清理类目名称
                         category_clean = re.sub(r'\s+', ' ', category_clean).strip()
@@ -1795,14 +2258,15 @@ class AmazonScraper(BaseScraper):
                             category_base = re.sub(r'\s*\(Ver el Top \d+ en [^)]*\)\s*$', '', category_base)  # 移除西班牙语 "Ver el Top X en ..." 内容
                             category_base = category_base.strip()
                             
-                            # 检查是否已经存在相同的类目和排名组合（基于清理后的类目名称）
+                            # 检查是否已经存在相同的类目（基于清理后的类目名称，不考虑排名格式）
                             existing = any(
                                 (item['category'] == category_clean or 
-                                 re.sub(r'\s*\([^)]*\)\s*$', '', item['category']).strip() == category_base) and 
-                                item['rank'] == rank_format
+                                 re.sub(r'\s*\([^)]*\)\s*$', '', item['category']).strip() == category_base) or
+                                (re.sub(r'\s*\([^)]*\)\s*$', '', item['category']).strip() == category_base)
                                 for item in structured_ranks
                             )
                             
+                            logger.info(f"Checking duplicate for category: '{category_base}', existing: {existing}")
                             if not existing:
                                 # 使用清理后的类目名称
                                 final_category = category_base if category_base else category_clean
@@ -1859,6 +2323,8 @@ class AmazonScraper(BaseScraper):
             'date first available', 'first available', 'available from',
             # 西班牙语
             'producto en amazon', 'desde', 'disponible desde',
+            # 德语
+            'im angebot von amazon.de seit', 'seit', 'verfügbar seit',
             # 其他语言可以继续添加
         ]
         
@@ -1888,16 +2354,36 @@ class AmazonScraper(BaseScraper):
         
         # 方法3：在detailBullets_feature_div中查找（多语言支持）
         detail_div = soup.select_one('#detailBullets_feature_div')
+        logger.info(f"Found detailBullets_feature_div: {detail_div is not None}")
         if detail_div:
-            for li in detail_div.select('li'):
+            li_elements = detail_div.select('li')
+            logger.info(f"Found {len(li_elements)} li elements in detailBullets_feature_div")
+            for i, li in enumerate(li_elements):
                 text = li.get_text()
+                logger.info(f"Checking li {i+1}: {text[:100]}...")
                 if self._is_listing_date_text(text):
-                    # 提取日期部分
+                    logger.info(f"Found listing date text in li {i+1}: {text}")
+                    # 提取日期部分（多语言支持）
                     import re
+                    # 英文格式
                     date_match = re.search(r'Date First Available\s*:\s*([^<]+)', text)
                     if date_match:
                         date_text = clean_text(date_match.group(1))
-                        logger.info(f"Found listing date in detailBullets: {date_text}")
+                        logger.info(f"Found listing date in detailBullets (EN): {date_text}")
+                        return date_text
+                    
+                    # 德语格式
+                    date_match = re.search(r'Im Angebot von Amazon\.de seit\s*:\s*([^<]+)', text)
+                    if date_match:
+                        date_text = clean_text(date_match.group(1))
+                        logger.info(f"Found listing date in detailBullets (DE): {date_text}")
+                        return date_text
+                    
+                    # 西班牙语格式
+                    date_match = re.search(r'Producto en Amazon\.es desde\s*:\s*([^<]+)', text)
+                    if date_match:
+                        date_text = clean_text(date_match.group(1))
+                        logger.info(f"Found listing date in detailBullets (ES): {date_text}")
                         return date_text
         
         logger.info("Listing date not found")
@@ -2096,6 +2582,8 @@ class AmazonScraper(BaseScraper):
             current_price_elements = soup.select(selector)
             logger.info(f"Found {len(current_price_elements)} current price elements with selector: {selector}")
             for i, element in enumerate(current_price_elements):
+                # 添加调试信息，显示每个价格元素的完整HTML
+                logger.info(f"Price element {i+1} HTML: {str(element)[:200]}...")
                 # 检查是否是划线价格（原价），如果是则跳过
                 if element.get('data-a-strike') == 'true' or 'a-text-price' in element.get('class', []):
                     logger.info(f"Skipping strikethrough price element {i+1}")
@@ -2111,15 +2599,36 @@ class AmazonScraper(BaseScraper):
                     whole = clean_text(price_whole.get_text())
                     fraction = clean_text(price_fraction.get_text()) if price_fraction else ""
                     
-                    if symbol and whole and symbol == '$':
-                        # 清理whole部分，移除多余的点
-                        whole = whole.replace('.', '')
-                        if fraction:
-                            price = f"{symbol}{whole}.{fraction}"
-                        else:
-                            price = f"{symbol}{whole}"
-                        logger.info(f"Found current price from selector {selector}: {price}")
-                        return price
+                    logger.info(f"Price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}'")
+                    
+                    if symbol and whole:
+                        # 处理欧元价格格式（4.27 €）
+                        if symbol == '€':
+                            # 对于欧元，将逗号转换为点号作为小数分隔符
+                            if fraction:
+                                if ',' in whole:
+                                    # whole部分包含逗号，替换为点号
+                                    whole = whole.replace(',', '.')
+                                    price = f"{whole}{fraction} {symbol}"
+                                else:
+                                    # whole部分不包含逗号，添加点号
+                                    price = f"{whole}.{fraction} {symbol}"
+                            else:
+                                price = f"{whole} {symbol}"
+                            logger.info(f"Found EUR price from selector {selector}: {price}")
+                            return price
+                        # 处理美元价格格式（$4.27）
+                        elif symbol == '$':
+                            # 清理whole部分，移除多余的点
+                            whole = whole.replace('.', '')
+                            if fraction:
+                                price = f"{symbol}{whole}.{fraction}"
+                            else:
+                                price = f"{symbol}{whole}"
+                            logger.info(f"Found USD price from selector {selector}: {price}")
+                            # 清理价格文本
+                            cleaned_price = self._clean_price_text(price)
+                            return cleaned_price
         
         # 然后尝试从 .aok-offscreen 中提取完整价格（优先美元）
         offscreen_prices = soup.select('.aok-offscreen')
@@ -2146,12 +2655,35 @@ class AmazonScraper(BaseScraper):
             # 如果有多个美元价格，选择最简洁的那个（通常是主要价格）
             best_usd_price = min(usd_prices, key=len)
             logger.info(f"Selected best USD price: {best_usd_price}")
-            return best_usd_price
+            # 清理价格文本
+            cleaned_price = self._clean_price_text(best_usd_price)
+            return cleaned_price
         
         # 如果没有美元价格，才考虑其他货币
         if other_currency_prices:
-            logger.warning("No USD price found, using other currency price")
-            return other_currency_prices[0]
+            logger.info("No USD price found, using other currency price")
+            # 对于欧元价格，优先选择不包含额外信息的价格（如折扣信息）
+            eur_prices = [price for price in other_currency_prices if '€' in price]
+            if eur_prices:
+                # 优先选择不包含 "mit"、"UVP"、"Einsparungen" 等额外信息的价格
+                clean_eur_prices = [price for price in eur_prices if not any(keyword in price for keyword in ['mit', 'UVP', 'Einsparungen', 'Prozent'])]
+                if clean_eur_prices:
+                    selected_price = clean_eur_prices[0]
+                    # 将欧元价格中的逗号转换为点号
+                    selected_price = selected_price.replace(',', '.')
+                    logger.info(f"Selected clean EUR price: {selected_price}")
+                    return selected_price
+                else:
+                    # 如果没有干净的价格，选择第一个欧元价格
+                    selected_price = eur_prices[0]
+                    # 将欧元价格中的逗号转换为点号
+                    selected_price = selected_price.replace(',', '.')
+                    logger.info(f"Selected first EUR price: {selected_price}")
+                    return selected_price
+            else:
+                # 清理其他货币价格文本
+                cleaned_price = self._clean_price_text(other_currency_prices[0])
+                return cleaned_price
         
         # 搜索包含 "savings" 或 "percent" 的价格文本
         logger.info("Searching for price with savings information...")
@@ -2192,21 +2724,41 @@ class AmazonScraper(BaseScraper):
             logger.info(f"Price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}'")
             
             if symbol and whole:
-                # 清理whole部分，移除多余的点
-                whole = whole.replace('.', '')
-                if fraction:
-                    price = f"{symbol}{whole}.{fraction}"
-                else:
-                    price = f"{symbol}{whole}"
-                
-                # 优先返回美元价格
-                if symbol == '$':
-                    logger.info(f"Found USD price from components: {price}")
+                # 处理欧元价格格式（4.27 €）
+                if symbol == '€':
+                    if fraction:
+                        if ',' in whole:
+                            # whole部分包含逗号，替换为点号
+                            whole = whole.replace(',', '.')
+                            price = f"{whole}{fraction} {symbol}"
+                        else:
+                            # whole部分不包含逗号，添加点号
+                            price = f"{whole}.{fraction} {symbol}"
+                    else:
+                        price = f"{whole} {symbol}"
+                    logger.info(f"Found EUR price from components: {price}")
                     return price
+                # 处理美元价格格式（$4.27）
+                elif symbol == '$':
+                    # 清理whole部分，移除多余的点
+                    whole = whole.replace('.', '')
+                    if fraction:
+                        price = f"{symbol}{whole}.{fraction}"
+                    else:
+                        price = f"{symbol}{whole}"
+                    logger.info(f"Found USD price from components: {price}")
+                    # 清理价格文本
+                    cleaned_price = self._clean_price_text(price)
+                    return cleaned_price
                 else:
-                    logger.info(f"Found non-USD price from components: {price}")
+                    # 其他货币
+                    if fraction:
+                        price = f"{symbol}{whole}.{fraction}"
+                    else:
+                        price = f"{symbol}{whole}"
+                    logger.info(f"Found other currency price from components: {price}")
                     # 继续寻找美元价格，但先保存这个价格作为备用
-                    non_usd_price = price
+                    non_usd_price = self._clean_price_text(price)
         
         
         # 尝试从所有可能的价格元素中搜索美元价格
@@ -2234,14 +2786,18 @@ class AmazonScraper(BaseScraper):
         
         if usd_prices:
             logger.info(f"Found {len(usd_prices)} USD prices, returning first: {usd_prices[0]}")
-            return usd_prices[0]
+            # 清理价格文本
+            cleaned_price = self._clean_price_text(usd_prices[0])
+            return cleaned_price
         
         # 如果没找到美元价格，再尝试其他货币
         for offscreen_price in offscreen_prices:
             price_text = clean_text(offscreen_price.get_text())
             if price_text and any(currency in price_text for currency in ['$', '€', '£', '¥', 'CNY']):
                 logger.info(f"Found price from offscreen: {price_text}")
-                return price_text
+                # 清理价格文本
+                cleaned_price = self._clean_price_text(price_text)
+                return cleaned_price
         
         # 尝试从其他选择器提取
         for selector in price_selectors:
@@ -2274,7 +2830,9 @@ class AmazonScraper(BaseScraper):
         # 如果没找到美元价格，返回找到的任何价格
         if 'non_usd_price' in locals():
             logger.info(f"No USD price found, returning non-USD price: {non_usd_price}")
-            return non_usd_price
+            # 清理价格文本
+            cleaned_price = self._clean_price_text(non_usd_price)
+            return cleaned_price
         
         logger.warning("No price found")
         return None
