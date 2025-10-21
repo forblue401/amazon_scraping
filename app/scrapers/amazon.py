@@ -186,6 +186,56 @@ class AmazonScraper(BaseScraper):
             'aws-target-zip-code': '00100'
         }
     
+    def _get_es_delivery_cookies(self) -> dict:
+        """获取西班牙配送地址的Cookie设置"""
+        return {
+            # 用户提供的实际Cookie（设置配送地址后）
+            'csm-sid': '188-7218408-5122545',
+            'x-amz-captcha-1': '1759756555861058',
+            'x-amz-captcha-2': 'SwMkhNffoM7GcVf8ab2LjQ==',
+            'session-id': '144-8192884-2975745',
+            'session-id-time': '2082787201l',
+            'i18n-prefs': 'EUR',
+            'lc-main': 'es_ES',
+            'ubid-main': '130-4907599-8762048',
+            'rx': 'AQA/oeOb8EMx2RSBn1avtS3swag=@AVYw52g=',
+            'csm-hit': 'tb:XYM8HCYTT32TW9JX9WRW+s-AG1AVFRXAQ1MDA3MMME3|1760012163830&t:1760012163830&adb:adblk_no',
+            'rxc': 'AC3VckgEzA43i/LZdU4',
+            # 西班牙配送地址Cookie
+            'aws-target-data': '{"countryOfResidence":"ES","region":"Madrid","city":"Madrid","postalCode":"28001","countryCode":"ES"}',
+            'aws-target-address': '{"countryOfResidence":"ES","region":"Madrid","city":"Madrid","postalCode":"28001","countryCode":"ES"}',
+            'aws-target-location': '{"countryOfResidence":"ES","region":"Madrid","city":"Madrid","postalCode":"28001","countryCode":"ES"}',
+            'aws-target-delivery': '{"countryOfResidence":"ES","region":"Madrid","city":"Madrid","postalCode":"28001","countryCode":"ES"}',
+            'aws-target-locale': 'es-ES',
+            'aws-target-currency': 'EUR',
+            'aws-target-timezone': 'Europe/Madrid',
+            'aws-target-country': 'ES',
+            'aws-target-region': 'Madrid',
+            'aws-target-city': 'Madrid',
+            'aws-target-postal': '28001',
+            'aws-target-zip': '28001',
+            'aws-target-state': 'Madrid',
+            'aws-target-city-state': 'Madrid, Madrid',
+            'aws-target-postal-code': '28001',
+            'aws-target-zip-code': '28001',
+            # 额外的西班牙地区设置
+            'sp-csm': '{"countryOfResidence":"ES","region":"Madrid","city":"Madrid","postalCode":"28001","countryCode":"ES"}',
+            'sp-csm-locale': 'es-ES',
+            'sp-csm-currency': 'EUR',
+            'sp-csm-country': 'ES',
+            'sp-csm-region': 'Madrid',
+            'sp-csm-city': 'Madrid',
+            'sp-csm-postal': '28001',
+            # 语言和地区偏好
+            'pref': 'glow=es-ES',
+            'pref-locale': 'es-ES',
+            'pref-currency': 'EUR',
+            'pref-country': 'ES',
+            'pref-region': 'Madrid',
+            'pref-city': 'Madrid',
+            'pref-postal': '28001'
+        }
+    
     async def scrape_product(self, asin: str, country: str) -> Dict[str, Any]:
         """
         爬取产品信息（两阶段）
@@ -238,6 +288,9 @@ class AmazonScraper(BaseScraper):
         elif country == "IT":
             it_cookies = self._get_it_delivery_cookies()
             content = await self.fetch_page(url, cookies=it_cookies, country=country)
+        elif country == "ES":
+            es_cookies = self._get_es_delivery_cookies()
+            content = await self.fetch_page(url, cookies=es_cookies, country=country)
         else:
             # 暂时不使用cookie，避免影响页面内容
             content = await self.fetch_with_delay(url)
@@ -1640,6 +1693,10 @@ class AmazonScraper(BaseScraper):
                         elif 'amazon.fr' in self.current_url:
                             seller_url = f"https://www.amazon.fr/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using FR Amazon for seller page")
+                        elif 'amazon.es' in self.current_url:
+                            # 西班牙亚马逊卖家页面
+                            seller_url = f"https://www.amazon.es/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
+                            logger.info("Using ES Amazon for seller page")
                         else:
                             seller_url = f"https://www.amazon.com/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using US Amazon for seller page")
@@ -2421,6 +2478,8 @@ class AmazonScraper(BaseScraper):
                 td = th.find_next_sibling('td')
                 if td:
                     date_text = clean_text(td.get_text())
+                    # 清理日期格式，移除多余的点号
+                    date_text = self._clean_date_format(date_text)
                     logger.info(f"Found listing date in table: {date_text}")
                     return date_text
         
@@ -2431,6 +2490,8 @@ class AmazonScraper(BaseScraper):
                 next_span = span.find_next_sibling('span')
                 if next_span:
                     date_text = clean_text(next_span.get_text())
+                    # 清理日期格式，移除多余的点号
+                    date_text = self._clean_date_format(date_text)
                     logger.info(f"Found listing date in span: {date_text}")
                     return date_text
         
@@ -2451,6 +2512,8 @@ class AmazonScraper(BaseScraper):
                     date_match = re.search(r'Date First Available\s*:\s*([^<]+)', text)
                     if date_match:
                         date_text = clean_text(date_match.group(1))
+                        # 清理日期格式，移除多余的点号
+                        date_text = self._clean_date_format(date_text)
                         logger.info(f"Found listing date in detailBullets (EN): {date_text}")
                         return date_text
                     
@@ -2458,6 +2521,8 @@ class AmazonScraper(BaseScraper):
                     date_match = re.search(r'Im Angebot von Amazon\.de seit\s*:\s*([^<]+)', text)
                     if date_match:
                         date_text = clean_text(date_match.group(1))
+                        # 清理日期格式，移除多余的点号
+                        date_text = self._clean_date_format(date_text)
                         logger.info(f"Found listing date in detailBullets (DE): {date_text}")
                         return date_text
                     
@@ -2465,6 +2530,8 @@ class AmazonScraper(BaseScraper):
                     date_match = re.search(r'Producto en Amazon\.es desde\s*:\s*([^<]+)', text)
                     if date_match:
                         date_text = clean_text(date_match.group(1))
+                        # 清理日期格式，移除多余的点号
+                        date_text = self._clean_date_format(date_text)
                         logger.info(f"Found listing date in detailBullets (ES): {date_text}")
                         return date_text
                     
@@ -2472,11 +2539,25 @@ class AmazonScraper(BaseScraper):
                     date_match = re.search(r'Date de mise en ligne sur Amazon\.fr\s*:\s*([^<]+)', text)
                     if date_match:
                         date_text = clean_text(date_match.group(1))
+                        # 清理日期格式，移除多余的点号
+                        date_text = self._clean_date_format(date_text)
                         logger.info(f"Found listing date in detailBullets (FR): {date_text}")
                         return date_text
         
         logger.info("Listing date not found")
         return None
+    
+    def _clean_date_format(self, date_text: str) -> str:
+        """清理日期格式，移除多余的点号"""
+        if not date_text:
+            return date_text
+        
+        # 移除月份缩写后的多余点号，如 "Jan." -> "Jan"
+        import re
+        # 匹配月份缩写后的点号
+        date_text = re.sub(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.', r'\1', date_text)
+        
+        return date_text.strip()
     
     def _extract_business_name(self, soup: BeautifulSoup) -> Optional[str]:
         """从卖家页面提取商家名称"""
@@ -2666,7 +2747,43 @@ class AmazonScraper(BaseScraper):
             '.a-price-fraction'
         ]
         
-        # 首先尝试从当前价格（突出显示的价格）中提取
+        # 首先尝试从 aok-offscreen 中提取完整价格（最准确）
+        offscreen_prices = soup.select('.aok-offscreen')
+        logger.info(f"Found {len(offscreen_prices)} offscreen price elements")
+        
+        # 收集所有有效的价格
+        valid_prices = []
+        for i, offscreen_price in enumerate(offscreen_prices):
+            price_text = clean_text(offscreen_price.get_text())
+            logger.info(f"Offscreen price {i+1}: '{price_text}'")
+            
+            if price_text and len(price_text) > 1 and '€' in price_text:
+                logger.info(f"Checking offscreen price: '{price_text}' - Length: {len(price_text)}, Contains €: {'€' in price_text}")
+                # 检查是否是完整的价格格式（包含数字和货币符号）
+                import re
+                regex_match = re.search(r'€\s*\d+[,.]?\d*|\d+[,.]?\d*\s*€', price_text)
+                logger.info(f"Regex match result: {regex_match}")
+                if regex_match:
+                    logger.info(f"Found valid EUR price in aok-offscreen: {price_text}")
+                    valid_prices.append(price_text)
+                else:
+                    logger.info(f"Regex did not match offscreen price: {price_text}")
+            else:
+                logger.info(f"Offscreen price conditions not met: '{price_text}' - Length: {len(price_text) if price_text else 0}, Contains €: {'€' in price_text if price_text else False}")
+        
+        # 如果有多个有效价格，选择最合适的（通常是第一个，但可以添加更多逻辑）
+        if valid_prices:
+            logger.info(f"Found {len(valid_prices)} valid offscreen prices: {valid_prices}")
+            # 优先选择包含逗号的价格（欧洲格式）
+            for price in valid_prices:
+                if ',' in price:
+                    logger.info(f"Selected price with comma (European format): {price}")
+                    return price
+            # 如果没有逗号格式，返回第一个
+            logger.info(f"Selected first valid price: {valid_prices[0]}")
+            return valid_prices[0]
+        
+        # 然后尝试从当前价格（突出显示的价格）中提取
         # 优先查找包含折扣信息的价格元素
         current_price_selectors = [
             # 优先查找包含折扣信息的价格元素
@@ -2837,65 +2954,6 @@ class AmazonScraper(BaseScraper):
                             cleaned_price = self._clean_price_text(price)
                             return cleaned_price
         
-        # 然后尝试从 .aok-offscreen 中提取完整价格（优先美元）
-        offscreen_prices = soup.select('.aok-offscreen')
-        logger.info(f"Found {len(offscreen_prices)} offscreen price elements")
-        
-        # 优先查找美元价格，跳过其他货币
-        usd_prices = []
-        other_currency_prices = []
-        
-        for i, offscreen_price in enumerate(offscreen_prices):
-            price_text = clean_text(offscreen_price.get_text())
-            logger.info(f"Offscreen price {i+1}: '{price_text}'")
-            logger.info(f"Offscreen price {i+1} HTML: {str(offscreen_price)}")
-            
-            if price_text and len(price_text) > 1:
-                if '$' in price_text:
-                    usd_prices.append(price_text)
-                    logger.info(f"Found USD price: {price_text}")
-                elif any(currency in price_text for currency in ['CNY', '€', '£', '¥', 'CAD', 'AUD']):
-                    other_currency_prices.append(price_text)
-                    logger.info(f"Found other currency price: {price_text}")
-        
-        # 优先返回美元价格
-        if usd_prices:
-            # 如果有多个美元价格，选择最简洁的那个（通常是主要价格）
-            best_usd_price = min(usd_prices, key=len)
-            logger.info(f"Selected best USD price: {best_usd_price}")
-            # 清理价格文本
-            cleaned_price = self._clean_price_text(best_usd_price)
-            return cleaned_price
-        
-        # 如果没有美元价格，才考虑其他货币
-        if other_currency_prices:
-            logger.info("No USD price found, using other currency price")
-            # 对于欧元价格，优先选择不包含额外信息的价格（如折扣信息）
-            eur_prices = [price for price in other_currency_prices if '€' in price]
-            if eur_prices:
-                # 优先选择不包含额外信息的价格（保留原始格式）
-                clean_eur_prices = [price for price in eur_prices if not any(keyword in price for keyword in ['mit', 'UVP', 'Einsparungen', 'Prozent', 'avec', 'd\'économies'])]
-                if clean_eur_prices:
-                    selected_price = clean_eur_prices[0]
-                    # 保留欧元价格的原始格式（逗号分隔符）
-                    logger.info(f"Selected clean EUR price: {selected_price}")
-                    return selected_price
-                else:
-                    # 如果没有干净的价格，选择第一个欧元价格并清理
-                    selected_price = eur_prices[0]
-                    # 从包含折扣信息的文本中提取纯价格
-                    if 'avec' in selected_price and 'd\'économies' in selected_price:
-                        # 提取 "1,62 € avec 11 % d'économies" 中的 "1,62 €"
-                        import re
-                        price_match = re.search(r'([0-9,]+)\s*€', selected_price)
-                        if price_match:
-                            selected_price = price_match.group(1) + '€'
-                    logger.info(f"Selected first EUR price: {selected_price}")
-                    return selected_price
-            else:
-                # 清理其他货币价格文本
-                cleaned_price = self._clean_price_text(other_currency_prices[0])
-                return cleaned_price
         
         # 搜索包含 "savings" 或 "percent" 的价格文本
         logger.info("Searching for price with savings information...")
