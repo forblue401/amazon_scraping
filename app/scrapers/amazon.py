@@ -158,6 +158,34 @@ class AmazonScraper(BaseScraper):
             'aws-target-zip-code': '75001'
         }
     
+    def _get_it_delivery_cookies(self) -> dict:
+        """获取意大利配送地址的Cookie设置"""
+        return {
+            # 意大利配送地址Cookie设置
+            'i18n-prefs': 'EUR',
+            'lc-main': 'it_IT',
+            'session-id': '144-8192884-2975745',
+            'session-id-time': '2082787201l',
+            'ubid-main': '130-4907599-8762048',
+            # 意大利罗马配送地址
+            'aws-target-data': '{"countryOfResidence":"IT","region":"Lazio","city":"Roma","postalCode":"00100","countryCode":"IT"}',
+            'aws-target-address': '{"countryOfResidence":"IT","region":"Lazio","city":"Roma","postalCode":"00100","countryCode":"IT"}',
+            'aws-target-location': '{"countryOfResidence":"IT","region":"Lazio","city":"Roma","postalCode":"00100","countryCode":"IT"}',
+            'aws-target-delivery': '{"countryOfResidence":"IT","region":"Lazio","city":"Roma","postalCode":"00100","countryCode":"IT"}',
+            'aws-target-locale': 'it-IT',
+            'aws-target-currency': 'EUR',
+            'aws-target-timezone': 'Europe/Rome',
+            'aws-target-country': 'IT',
+            'aws-target-region': 'Lazio',
+            'aws-target-city': 'Roma',
+            'aws-target-postal': '00100',
+            'aws-target-zip': '00100',
+            'aws-target-state': 'Lazio',
+            'aws-target-city-state': 'Roma, Lazio',
+            'aws-target-postal-code': '00100',
+            'aws-target-zip-code': '00100'
+        }
+    
     async def scrape_product(self, asin: str, country: str) -> Dict[str, Any]:
         """
         爬取产品信息（两阶段）
@@ -207,6 +235,9 @@ class AmazonScraper(BaseScraper):
         elif country == "FR":
             fr_cookies = self._get_fr_delivery_cookies()
             content = await self.fetch_page(url, cookies=fr_cookies, country=country)
+        elif country == "IT":
+            it_cookies = self._get_it_delivery_cookies()
+            content = await self.fetch_page(url, cookies=it_cookies, country=country)
         else:
             # 暂时不使用cookie，避免影响页面内容
             content = await self.fetch_with_delay(url)
@@ -1004,8 +1035,9 @@ class AmazonScraper(BaseScraper):
             r'[€$£¥]\d+\.?\d*',     # 货币符号直接连数字
         ]
         
-        for pattern in price_patterns:
+        for i, pattern in enumerate(price_patterns):
             match = re.search(pattern, price_text)
+            logger.info(f"Pattern {i+1} '{pattern}' on '{price_text}': {match.group(0) if match else 'No match'}")
             if match:
                 cleaned = match.group(0).strip()
                 logger.info(f"Cleaned price from '{price_text}' to '{cleaned}'")
@@ -1602,6 +1634,12 @@ class AmazonScraper(BaseScraper):
                         elif 'amazon.de' in self.current_url:
                             seller_url = f"https://www.amazon.de/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using DE Amazon for seller page")
+                        elif 'amazon.it' in self.current_url:
+                            seller_url = f"https://www.amazon.it/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
+                            logger.info("Using IT Amazon for seller page")
+                        elif 'amazon.fr' in self.current_url:
+                            seller_url = f"https://www.amazon.fr/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
+                            logger.info("Using FR Amazon for seller page")
                         else:
                             seller_url = f"https://www.amazon.com/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using US Amazon for seller page")
@@ -1612,6 +1650,13 @@ class AmazonScraper(BaseScraper):
             logger.warning("No seller link found")
         
         logger.info(f"Final seller info - Name: {seller_name}, URL: {seller_url}")
+        
+        # 添加详细的调试信息
+        if not seller_url:
+            logger.warning("No seller URL found - seller_info will be null")
+        else:
+            logger.info(f"Seller URL found: {seller_url}")
+        
         return seller_name, seller_url
     
     def _extract_rating(self, soup: BeautifulSoup) -> Optional[str]:
@@ -2218,7 +2263,7 @@ class AmazonScraper(BaseScraper):
                                         rank_format = f"#{match_rank.replace(',', '').replace('.', '')}"
                                     elif 'nº' in pattern:
                                         rank_format = f"nº {match_rank.replace(',', '').replace('.', '')}"
-                                    elif 'Nr\.' in pattern:
+                                    elif 'Nr\\.' in pattern:
                                         rank_format = f"Nr. {match_rank.replace(',', '').replace('.', '')}"
                                     else:
                                         rank_format = f"{match_rank.replace(',', '').replace('.', '')}"
@@ -2657,25 +2702,46 @@ class AmazonScraper(BaseScraper):
                     price_symbol = element.select_one('.a-price-symbol')
                     price_whole = element.select_one('.a-price-whole')
                     price_fraction = element.select_one('.a-price-fraction')
+                    price_decimal = element.select_one('.a-price-decimal')
                     
                     if price_symbol and price_whole:
                         symbol = clean_text(price_symbol.get_text())
                         whole = clean_text(price_whole.get_text())
                         fraction = clean_text(price_fraction.get_text()) if price_fraction else ""
+                        decimal = clean_text(price_decimal.get_text()) if price_decimal else ""
                         
-                        logger.info(f"Discount price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}'")
+                        logger.info(f"Discount price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}', Decimal: '{decimal}'")
+                        logger.info(f"Full discount price element HTML: {str(element)}")
+                        logger.info(f"Discount price component details - Symbol text: '{price_symbol.get_text() if price_symbol else 'None'}', Whole text: '{price_whole.get_text() if price_whole else 'None'}', Fraction text: '{price_fraction.get_text() if price_fraction else 'None'}', Decimal text: '{price_decimal.get_text() if price_decimal else 'None'}'")
                         
                         if symbol and whole:
                             # 处理欧元价格格式（保留原始格式）
                             if symbol == '€':
                                 # 对于欧元，保留原始格式（使用逗号作为小数分隔符）
                                 if fraction:
-                                    if ',' in whole:
+                                    if decimal:
+                                        # 有decimal元素，说明格式是 8<span class="a-price-decimal">,</span>88
+                                        # 检查whole部分是否已经包含分隔符
+                                        if ',' in whole or '.' in whole:
+                                            # whole部分已经包含分隔符，直接组合
+                                            # 如果whole以点号结尾，替换为逗号
+                                            if whole.endswith('.'):
+                                                price = f"{whole.replace('.', ',')}{fraction}{symbol}"
+                                            else:
+                                                price = f"{whole}{fraction}{symbol}"
+                                        else:
+                                            # whole部分不包含分隔符，使用decimal作为分隔符
+                                            price = f"{whole}{decimal}{fraction}{symbol}"
+                                    elif ',' in whole:
                                         # whole部分包含逗号，保持原样
                                         price = f"{whole}{fraction}{symbol}"
                                     elif '.' in whole:
                                         # whole部分包含点号，替换为逗号
-                                        price = f"{whole.replace('.', ',')}{fraction}{symbol}"
+                                        # 避免双点号问题：如果whole已经是"10."格式，直接使用
+                                        if whole.endswith('.'):
+                                            price = f"{whole.replace('.', ',')}{fraction}{symbol}"
+                                        else:
+                                            price = f"{whole.replace('.', ',')}{fraction}{symbol}"
                                     else:
                                         # whole部分不包含分隔符，添加逗号
                                         price = f"{whole},{fraction}{symbol}"
@@ -2711,25 +2777,46 @@ class AmazonScraper(BaseScraper):
                 price_symbol = element.select_one('.a-price-symbol')
                 price_whole = element.select_one('.a-price-whole')
                 price_fraction = element.select_one('.a-price-fraction')
+                price_decimal = element.select_one('.a-price-decimal')
                 
                 if price_symbol and price_whole:
                     symbol = clean_text(price_symbol.get_text())
                     whole = clean_text(price_whole.get_text())
                     fraction = clean_text(price_fraction.get_text()) if price_fraction else ""
+                    decimal = clean_text(price_decimal.get_text()) if price_decimal else ""
                     
-                    logger.info(f"Price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}'")
+                    logger.info(f"Price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}', Decimal: '{decimal}'")
+                    logger.info(f"Full price element HTML: {str(element)}")
+                    logger.info(f"Price component details - Symbol text: '{price_symbol.get_text() if price_symbol else 'None'}', Whole text: '{price_whole.get_text() if price_whole else 'None'}', Fraction text: '{price_fraction.get_text() if price_fraction else 'None'}', Decimal text: '{price_decimal.get_text() if price_decimal else 'None'}'")
                     
                     if symbol and whole:
                         # 处理欧元价格格式（保留原始格式）
                         if symbol == '€':
                             # 对于欧元，保留原始格式（使用逗号作为小数分隔符）
                             if fraction:
-                                if ',' in whole:
+                                if decimal:
+                                    # 有decimal元素，说明格式是 8<span class="a-price-decimal">,</span>88
+                                    # 检查whole部分是否已经包含分隔符
+                                    if ',' in whole or '.' in whole:
+                                        # whole部分已经包含分隔符，直接组合
+                                        # 如果whole以点号结尾，替换为逗号
+                                        if whole.endswith('.'):
+                                            price = f"{whole.replace('.', ',')}{fraction}{symbol}"
+                                        else:
+                                            price = f"{whole}{fraction}{symbol}"
+                                    else:
+                                        # whole部分不包含分隔符，使用decimal作为分隔符
+                                        price = f"{whole}{decimal}{fraction}{symbol}"
+                                elif ',' in whole:
                                     # whole部分包含逗号，保持原样
                                     price = f"{whole}{fraction}{symbol}"
                                 elif '.' in whole:
                                     # whole部分包含点号，替换为逗号
-                                    price = f"{whole.replace('.', ',')}{fraction}{symbol}"
+                                    # 避免双点号问题：如果whole已经是"10."格式，直接使用
+                                    if whole.endswith('.'):
+                                        price = f"{whole.replace('.', ',')}{fraction}{symbol}"
+                                    else:
+                                        price = f"{whole.replace('.', ',')}{fraction}{symbol}"
                                 else:
                                     # whole部分不包含分隔符，添加逗号
                                     price = f"{whole},{fraction}{symbol}"
@@ -2761,6 +2848,7 @@ class AmazonScraper(BaseScraper):
         for i, offscreen_price in enumerate(offscreen_prices):
             price_text = clean_text(offscreen_price.get_text())
             logger.info(f"Offscreen price {i+1}: '{price_text}'")
+            logger.info(f"Offscreen price {i+1} HTML: {str(offscreen_price)}")
             
             if price_text and len(price_text) > 1:
                 if '$' in price_text:
@@ -2839,25 +2927,35 @@ class AmazonScraper(BaseScraper):
         price_symbol = soup.select_one('.a-price-symbol')
         price_whole = soup.select_one('.a-price-whole')
         price_fraction = soup.select_one('.a-price-fraction')
+        price_decimal = soup.select_one('.a-price-decimal')
         
         if price_symbol and price_whole:
             symbol = clean_text(price_symbol.get_text())
             whole = clean_text(price_whole.get_text())
             fraction = clean_text(price_fraction.get_text()) if price_fraction else ""
+            decimal = clean_text(price_decimal.get_text()) if price_decimal else ""
             
-            logger.info(f"Price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}'")
+            logger.info(f"Price components - Symbol: '{symbol}', Whole: '{whole}', Fraction: '{fraction}', Decimal: '{decimal}'")
             
             if symbol and whole:
                 # 处理欧元价格格式（保留原始格式）
                 if symbol == '€':
                     if fraction:
-                        if ',' in whole:
+                        if decimal:
+                            # 有decimal元素，说明格式是 8<span class="a-price-decimal">,</span>88
+                            # 检查whole部分是否已经包含分隔符
+                            if ',' in whole or '.' in whole:
+                                # whole部分已经包含分隔符，直接组合
+                                price = f"{whole}{fraction}{symbol}"
+                            else:
+                                # whole部分不包含分隔符，使用decimal作为分隔符
+                                price = f"{whole}{decimal}{fraction}{symbol}"
+                        elif ',' in whole:
                             # whole部分包含逗号，保持原样
                             price = f"{whole}{fraction}{symbol}"
                         elif '.' in whole:
-                            # whole部分包含点号，移除点号并添加逗号
-                            whole_clean = whole.replace('.', '')
-                            price = f"{whole_clean},{fraction}{symbol}"
+                            # whole部分包含点号，替换为逗号
+                            price = f"{whole.replace('.', ',')}{fraction}{symbol}"
                         else:
                             # whole部分不包含分隔符，添加逗号
                             price = f"{whole},{fraction}{symbol}"
@@ -2918,12 +3016,15 @@ class AmazonScraper(BaseScraper):
             return cleaned_price
         
         # 如果没找到美元价格，再尝试其他货币
-        for offscreen_price in offscreen_prices:
+        for i, offscreen_price in enumerate(offscreen_prices):
             price_text = clean_text(offscreen_price.get_text())
+            logger.info(f"Checking offscreen price {i+1}: '{price_text}'")
             if price_text and any(currency in price_text for currency in ['$', '€', '£', '¥', 'CNY']):
                 logger.info(f"Found price from offscreen: {price_text}")
+                logger.info(f"Offscreen price HTML: {str(offscreen_price)}")
                 # 清理价格文本
                 cleaned_price = self._clean_price_text(price_text)
+                logger.info(f"Cleaned price: {cleaned_price}")
                 return cleaned_price
         
         # 尝试从其他选择器提取
