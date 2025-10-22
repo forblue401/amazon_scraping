@@ -236,6 +236,108 @@ class AmazonScraper(BaseScraper):
             'pref-postal': '28001'
         }
     
+    def _get_jp_delivery_cookies(self) -> dict:
+        """获取日本配送地址的Cookie设置"""
+        return {
+            # 日本配送地址Cookie - 东京
+            'aws-target-data': '{"countryOfResidence":"JP","region":"Tokyo","city":"Tokyo","postalCode":"100-0001","countryCode":"JP"}',
+            'aws-target-address': '{"countryOfResidence":"JP","region":"Tokyo","city":"Tokyo","postalCode":"100-0001","countryCode":"JP"}',
+            'aws-target-location': '{"countryOfResidence":"JP","region":"Tokyo","city":"Tokyo","postalCode":"100-0001","countryCode":"JP"}',
+            'aws-target-delivery': '{"countryOfResidence":"JP","region":"Tokyo","city":"Tokyo","postalCode":"100-0001","countryCode":"JP"}',
+            'aws-target-locale': 'ja-JP',
+            'aws-target-currency': 'JPY',
+            'aws-target-timezone': 'Asia/Tokyo',
+            'aws-target-country': 'JP',
+            'aws-target-region': 'Tokyo',
+            'aws-target-city': 'Tokyo',
+            'aws-target-postal': '100-0001',
+            'aws-target-zip': '100-0001',
+            'aws-target-state': 'Tokyo',
+            'aws-target-city-state': 'Tokyo, Tokyo',
+            'aws-target-postal-code': '100-0001',
+            'aws-target-zip-code': '100-0001',
+            # 额外的日本地区设置
+            'sp-csm': '{"countryOfResidence":"JP","region":"Tokyo","city":"Tokyo","postalCode":"100-0001","countryCode":"JP"}',
+            'sp-csm-locale': 'ja-JP',
+            'sp-csm-currency': 'JPY',
+            'sp-csm-country': 'JP',
+            'sp-csm-region': 'Tokyo',
+            'sp-csm-city': 'Tokyo',
+            'sp-csm-postal': '100-0001',
+            # 语言和地区偏好
+            'pref': 'glow=ja-JP',
+            'pref-locale': 'ja-JP',
+            'pref-currency': 'JPY',
+            'pref-country': 'JP',
+            'pref-region': 'Tokyo',
+            'pref-city': 'Tokyo',
+            'pref-postal': '100-0001',
+            # 日本特定的Cookie
+            'i18n-prefs': 'JPY',
+            'lc-main': 'ja_JP',
+            'session-id': '144-8192884-2975745',
+            'session-id-time': '2082787201l',
+            'ubid-main': '130-4907599-8762048'
+        }
+    
+    def _get_in_delivery_cookies(self) -> dict:
+        """获取印度配送地址的Cookie设置"""
+        return {
+            # 基础会话Cookie
+            'session-id': '144-8192884-2975745',
+            'session-id-time': '2082787201l',
+            'ubid-main': '130-4907599-8762048',
+            'rx': 'AQA/oeOb8EMx2RSBn1avtS3swag=@AVYw52g=',
+            'csm-hit': 'tb:XYM8HCYTT32TW9JX9WRW+s-AG1AVFRXAQ1MDA3MMME3|1760012163830&t:1760012163830&adb:adblk_no',
+            'rxc': 'AC3VckgEzA43i/LZdU4',
+            # 印度配送地址Cookie - 孟买
+            'aws-target-data': '{"countryOfResidence":"IN","region":"Maharashtra","city":"Mumbai","postalCode":"400001","countryCode":"IN"}',
+            'aws-target-address': '{"countryOfResidence":"IN","region":"Maharashtra","city":"Mumbai","postalCode":"400001","countryCode":"IN"}',
+            'aws-target-location': '{"countryOfResidence":"IN","region":"Maharashtra","city":"Mumbai","postalCode":"400001","countryCode":"IN"}',
+            'aws-target-delivery': '{"countryOfResidence":"IN","region":"Maharashtra","city":"Mumbai","postalCode":"400001","countryCode":"IN"}',
+            'aws-target-locale': 'en-IN',
+            'aws-target-currency': 'INR',
+            'aws-target-language': 'en',
+            'aws-target-country': 'IN',
+            'aws-target-region': 'Maharashtra',
+            'aws-target-city': 'Mumbai',
+            'aws-target-postal-code': '400001',
+            'aws-target-zip': '400001',
+            'aws-target-state': 'Maharashtra',
+            'aws-target-city-state': 'Mumbai, Maharashtra',
+            'aws-target-zip-code': '400001',
+            # 额外的印度地区设置
+            'sp-csm': '{"countryOfResidence":"IN","region":"Maharashtra","city":"Mumbai","postalCode":"400001","countryCode":"IN"}',
+            'sp-csm-locale': 'en-IN',
+            'sp-csm-currency': 'INR',
+            'sp-csm-country': 'IN',
+            'sp-csm-region': 'Maharashtra',
+            'sp-csm-city': 'Mumbai',
+            'sp-csm-postal': '400001',
+            # 语言和地区偏好
+            'pref': 'glow=en-IN',
+            'pref-locale': 'en-IN',
+            'pref-currency': 'INR',
+            'pref-language': 'en',
+            'pref-country': 'IN',
+            'pref-region': 'Maharashtra',
+            'pref-city': 'Mumbai',
+            'pref-postal': '400001',
+            # 印度特定的Cookie
+            'i18n-prefs': 'INR',
+            'lc-main': 'en_IN',
+            'x-wl-uid': '1Q2W3E4R5T6Y7U8I9O0P=',
+            'x-amz-captcha-1': '0',
+            'x-amz-captcha-2': '0',
+            'x-amz-target-data': '{"countryOfResidence":"IN","region":"Maharashtra","city":"Mumbai","postalCode":"400001","countryCode":"IN"}',
+            'x-amz-target-locale': 'en-IN',
+            'x-amz-target-currency': 'INR',
+            'x-amz-target-country': 'IN',
+            'x-amz-target-region': 'Maharashtra',
+            'x-amz-target-city': 'Mumbai',
+            'x-amz-target-postal': '400001'
+        }
+    
     async def scrape_product(self, asin: str, country: str) -> Dict[str, Any]:
         """
         爬取产品信息（两阶段）
@@ -291,6 +393,12 @@ class AmazonScraper(BaseScraper):
         elif country == "ES":
             es_cookies = self._get_es_delivery_cookies()
             content = await self.fetch_page(url, cookies=es_cookies, country=country)
+        elif country == "JP":
+            jp_cookies = self._get_jp_delivery_cookies()
+            content = await self.fetch_page(url, cookies=jp_cookies, country=country)
+        elif country == "IN":
+            in_cookies = self._get_in_delivery_cookies()
+            content = await self.fetch_page(url, cookies=in_cookies, country=country)
         else:
             # 暂时不使用cookie，避免影响页面内容
             content = await self.fetch_with_delay(url)
@@ -305,6 +413,14 @@ class AmazonScraper(BaseScraper):
         # 添加调试信息
         logger.info(f"Page content length: {len(content)}")
         logger.info(f"Page title: {soup.title.get_text() if soup.title else 'No title'}")
+        
+        # 添加页面内容预览
+        page_text = soup.get_text()[:1000] if soup else "No soup content"
+        logger.info(f"Page content preview: {page_text}")
+        
+        # 检查是否有反爬虫检测
+        if "robot" in page_text.lower() or "captcha" in page_text.lower() or "blocked" in page_text.lower():
+            logger.warning("Possible anti-bot detection detected in page content")
         
         # 检查是否有错误页面
         if "Page Not Found" in content or "Sorry, we just need to verify" in content:
@@ -1697,6 +1813,14 @@ class AmazonScraper(BaseScraper):
                             # 西班牙亚马逊卖家页面
                             seller_url = f"https://www.amazon.es/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using ES Amazon for seller page")
+                        elif 'amazon.co.jp' in self.current_url:
+                            # 日本亚马逊卖家页面
+                            seller_url = f"https://www.amazon.co.jp/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
+                            logger.info("Using JP Amazon for seller page")
+                        elif 'amazon.in' in self.current_url:
+                            # 印度亚马逊卖家页面
+                            seller_url = f"https://www.amazon.in/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
+                            logger.info("Using IN Amazon for seller page")
                         else:
                             seller_url = f"https://www.amazon.com/sp?ie=UTF8&seller={seller_id}&asin={asin}&ref_=dp_merchant_link{other_params_str}"
                             logger.info("Using US Amazon for seller page")
@@ -2036,6 +2160,7 @@ class AmazonScraper(BaseScraper):
                     logger.info("Searching in productDetails_detailBullets_sections1 table...")
                     for th in detail_table.select('th.a-color-secondary.a-size-base.prodDetSectionEntry'):
                         th_text = th.get_text()
+                        logger.info(f"Checking detailBullets th: {th_text[:100]}...")
                         if 'Best Sellers Rank' in th_text or 'Amazon Bestseller-Rang' in th_text or 'Bestseller-Rang' in th_text:
                             logger.info(f"Found Best Sellers Rank th in productDetails: {th_text}")
                             td = th.find_next_sibling('td')
@@ -2198,12 +2323,14 @@ class AmazonScraper(BaseScraper):
                 # 英文格式：#数字 in 类目名 或 数字 in 类目名
                 # 西班牙语格式：nº数字 en 类目名
                 # 德国格式：Nr. 数字 in 类目名 或 Best Sellers Rank: 数字 in 类目名
+                # 印度格式：#11,788 in Home & Kitchen
                 patterns = [
                     r'#([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 英文格式（带#）
                     r'([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',   # 英文格式（不带#）
                     r'nº([0-9,]+)\s+en\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 西班牙语格式
                     r'Nr\.\s*([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 德语格式（Nr. 数字 in 类目）
                     r'Best Sellers Rank:\s*([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 德国格式
+                    r'#([0-9,]+)\s+in\s+([^&]+?)(?:\s*\([^)]*\)\s*|$)',  # 印度格式（支持&符号）
                 ]
                 
                 matches = []
@@ -2464,6 +2591,8 @@ class AmazonScraper(BaseScraper):
             'im angebot von amazon.de seit', 'seit', 'verfügbar seit',
             # 法语
             'date de mise en ligne sur amazon.fr', 'mise en ligne', 'disponible depuis',
+            # 印度
+            'date first available', 'first available',
             # 其他语言可以继续添加
         ]
         
@@ -2495,7 +2624,25 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Found listing date in span: {date_text}")
                     return date_text
         
-        # 方法3：在detailBullets_feature_div中查找（多语言支持）
+        # 方法3：在productDetails_detailBullets_sections1表格中查找（印度亚马逊）
+        detail_table = soup.select_one('#productDetails_detailBullets_sections1')
+        logger.info(f"Found productDetails_detailBullets_sections1: {detail_table is not None}")
+        if detail_table:
+            logger.info("Searching in productDetails_detailBullets_sections1 table...")
+            for th in detail_table.select('th.a-color-secondary.a-size-base.prodDetSectionEntry'):
+                th_text = th.get_text()
+                logger.info(f"Checking productDetails th: {th_text[:100]}...")
+                if self._is_listing_date_text(th_text):
+                    # 查找对应的td元素
+                    td = th.find_next_sibling('td')
+                    if td:
+                        date_text = clean_text(td.get_text())
+                        # 清理日期格式，移除多余的点号
+                        date_text = self._clean_date_format(date_text)
+                        logger.info(f"Found listing date in productDetails table: {date_text}")
+                        return date_text
+        
+        # 方法4：在detailBullets_feature_div中查找（多语言支持）
         detail_div = soup.select_one('#detailBullets_feature_div')
         logger.info(f"Found detailBullets_feature_div: {detail_div is not None}")
         if detail_div:
@@ -2584,6 +2731,14 @@ class AmazonScraper(BaseScraper):
         """从卖家页面提取所有卖家详细信息"""
         # 添加调试信息
         logger.info("Searching for Detailed Seller Information in seller page...")
+        
+        # 首先检查是否是印度亚马逊的卖家页面，专门处理FSSAI许可证号
+        fssai_element = soup.select_one('#spp-expander-about-seller .spp-expander-more-content p strong')
+        if fssai_element:
+            fssai_text = clean_text(fssai_element.get_text())
+            logger.info(f"Found FSSAI license in Indian seller page: {fssai_text}")
+            if 'FSSAI LICENSE' in fssai_text:
+                return fssai_text
         
         # 查找"Detailed Seller Information"部分
         detailed_info = {}
@@ -2683,6 +2838,32 @@ class AmazonScraper(BaseScraper):
         if info_parts:
             result = '\n'.join(info_parts)
             logger.info(f"Complete seller info: {result}")
+            
+            # 对于印度亚马逊，过滤掉客户反馈等无关信息
+            if 'amazon.in' in str(soup) or 'FSSAI' in result:
+                logger.info("Detected Indian Amazon seller page, filtering out customer feedback...")
+                # 只保留包含FSSAI许可证号的行，或者过滤掉客户反馈相关的文本
+                filtered_parts = []
+                for part in info_parts:
+                    # 保留FSSAI许可证号
+                    if 'FSSAI LICENSE' in part:
+                        filtered_parts.append(part)
+                    # 过滤掉客户反馈相关的文本
+                    elif not any(keyword in part.lower() for keyword in [
+                        'share your thoughts', 'customer feedback', 'message from amazon', 
+                        'by ', 'on ', 'template-', 'privacy and security', 'contact seller'
+                    ]):
+                        filtered_parts.append(part)
+                
+                if filtered_parts:
+                    result = '\n'.join(filtered_parts)
+                    logger.info(f"Filtered seller info for Indian Amazon: {result}")
+                    return result
+                else:
+                    # 如果过滤后没有内容，返回null
+                    logger.info("No relevant seller info found after filtering")
+                    return None
+            
             return result
         
         # 如果没找到详细信息，回退到原来的地址提取逻辑
@@ -2771,15 +2952,23 @@ class AmazonScraper(BaseScraper):
             else:
                 logger.info(f"Offscreen price conditions not met: '{price_text}' - Length: {len(price_text) if price_text else 0}, Contains €: {'€' in price_text if price_text else False}")
         
-        # 如果有多个有效价格，选择最合适的（通常是第一个，但可以添加更多逻辑）
+        # 如果有多个有效价格，选择最合适的
         if valid_prices:
             logger.info(f"Found {len(valid_prices)} valid offscreen prices: {valid_prices}")
-            # 优先选择包含逗号的价格（欧洲格式）
+            
+            # 优先选择不包含折扣信息的价格（纯价格）
+            for price in valid_prices:
+                if 'savings' not in price.lower() and 'percent' not in price.lower():
+                    logger.info(f"Selected clean price (no discount info): {price}")
+                    return price
+            
+            # 其次选择包含逗号的价格（欧洲格式）
             for price in valid_prices:
                 if ',' in price:
                     logger.info(f"Selected price with comma (European format): {price}")
                     return price
-            # 如果没有逗号格式，返回第一个
+            
+            # 最后返回第一个
             logger.info(f"Selected first valid price: {valid_prices[0]}")
             return valid_prices[0]
         
@@ -2953,6 +3142,40 @@ class AmazonScraper(BaseScraper):
                             # 清理价格文本
                             cleaned_price = self._clean_price_text(price)
                             return cleaned_price
+                        # 处理印度卢比价格格式（₹30,989.00）
+                        elif symbol == '₹':
+                            # 处理印度卢比价格格式
+                            if fraction:
+                                if decimal:
+                                    # 有decimal元素，说明格式是 30,989<span class="a-price-decimal">.</span>00
+                                    # 检查whole部分是否已经包含分隔符
+                                    if ',' in whole or '.' in whole:
+                                        # whole部分已经包含分隔符，直接组合
+                                        # 如果whole以点号结尾，替换为逗号
+                                        if whole.endswith('.'):
+                                            price = f"{symbol}{whole.replace('.', ',')}{fraction}"
+                                        else:
+                                            price = f"{symbol}{whole}{fraction}"
+                                    else:
+                                        # whole部分不包含分隔符，使用decimal作为分隔符
+                                        price = f"{symbol}{whole}{decimal}{fraction}"
+                                elif ',' in whole:
+                                    # whole部分包含逗号，保持原样
+                                    price = f"{symbol}{whole}{fraction}"
+                                elif '.' in whole:
+                                    # whole部分包含点号，替换为逗号
+                                    # 避免双点号问题：如果whole已经是"30,989."格式，直接使用
+                                    if whole.endswith('.'):
+                                        price = f"{symbol}{whole.replace('.', ',')}{fraction}"
+                                    else:
+                                        price = f"{symbol}{whole.replace('.', ',')}{fraction}"
+                                else:
+                                    # whole部分不包含分隔符，添加逗号
+                                    price = f"{symbol}{whole},{fraction}"
+                            else:
+                                price = f"{symbol}{whole}"
+                            logger.info(f"Found INR price from selector {selector}: {price}")
+                            return price
         
         
         # 搜索包含 "savings" 或 "percent" 的价格文本
