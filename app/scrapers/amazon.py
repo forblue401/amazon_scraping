@@ -338,6 +338,64 @@ class AmazonScraper(BaseScraper):
             'x-amz-target-postal': '400001'
         }
     
+    def _get_br_delivery_cookies(self) -> dict:
+        """获取巴西配送地址的Cookie设置"""
+        return {
+            # 基础会话Cookie
+            'session-id': '144-8192884-2975745',
+            'session-id-time': '2082787201l',
+            'ubid-main': '130-4907599-8762048',
+            'rx': 'AQA/oeOb8EMx2RSBn1avtS3swag=@AVYw52g=',
+            'csm-hit': 'tb:XYM8HCYTT32TW9JX9WRW+s-AG1AVFRXAQ1MDA3MMME3|1760012163830&t:1760012163830&adb:adblk_no',
+            'rxc': 'AC3VckgEzA43i/LZdU4',
+            # 巴西配送地址Cookie - 圣保罗
+            'aws-target-data': '{"countryOfResidence":"BR","region":"São Paulo","city":"São Paulo","postalCode":"01310-100","countryCode":"BR"}',
+            'aws-target-address': '{"countryOfResidence":"BR","region":"São Paulo","city":"São Paulo","postalCode":"01310-100","countryCode":"BR"}',
+            'aws-target-location': '{"countryOfResidence":"BR","region":"São Paulo","city":"São Paulo","postalCode":"01310-100","countryCode":"BR"}',
+            'aws-target-delivery': '{"countryOfResidence":"BR","region":"São Paulo","city":"São Paulo","postalCode":"01310-100","countryCode":"BR"}',
+            'aws-target-locale': 'pt-BR',
+            'aws-target-currency': 'BRL',
+            'aws-target-language': 'pt',
+            'aws-target-country': 'BR',
+            'aws-target-region': 'São Paulo',
+            'aws-target-city': 'São Paulo',
+            'aws-target-postal-code': '01310-100',
+            'aws-target-zip': '01310-100',
+            'aws-target-state': 'São Paulo',
+            'aws-target-city-state': 'São Paulo, SP',
+            'aws-target-zip-code': '01310-100',
+            # 额外的巴西地区设置
+            'sp-csm': '{"countryOfResidence":"BR","region":"São Paulo","city":"São Paulo","postalCode":"01310-100","countryCode":"BR"}',
+            'sp-csm-locale': 'pt-BR',
+            'sp-csm-currency': 'BRL',
+            'sp-csm-country': 'BR',
+            'sp-csm-region': 'São Paulo',
+            'sp-csm-city': 'São Paulo',
+            'sp-csm-postal': '01310-100',
+            # 语言和地区偏好
+            'pref': 'glow=pt-BR',
+            'pref-locale': 'pt-BR',
+            'pref-currency': 'BRL',
+            'pref-language': 'pt',
+            'pref-country': 'BR',
+            'pref-region': 'São Paulo',
+            'pref-city': 'São Paulo',
+            'pref-postal': '01310-100',
+            # 巴西特定的Cookie
+            'i18n-prefs': 'BRL',
+            'lc-main': 'pt_BR',
+            'x-wl-uid': '1Q2W3E4R5T6Y7U8I9O0P=',
+            'x-amz-captcha-1': '0',
+            'x-amz-captcha-2': '0',
+            'x-amz-target-data': '{"countryOfResidence":"BR","region":"São Paulo","city":"São Paulo","postalCode":"01310-100","countryCode":"BR"}',
+            'x-amz-target-locale': 'pt-BR',
+            'x-amz-target-currency': 'BRL',
+            'x-amz-target-country': 'BR',
+            'x-amz-target-region': 'São Paulo',
+            'x-amz-target-city': 'São Paulo',
+            'x-amz-target-postal': '01310-100'
+        }
+    
     async def scrape_product(self, asin: str, country: str) -> Dict[str, Any]:
         """
         爬取产品信息（两阶段）
@@ -399,6 +457,9 @@ class AmazonScraper(BaseScraper):
         elif country == "IN":
             in_cookies = self._get_in_delivery_cookies()
             content = await self.fetch_page(url, cookies=in_cookies, country=country)
+        elif country == "BR":
+            br_cookies = self._get_br_delivery_cookies()
+            content = await self.fetch_page(url, cookies=br_cookies, country=country)
         else:
             # 暂时不使用cookie，避免影响页面内容
             content = await self.fetch_with_delay(url)
@@ -1197,11 +1258,24 @@ class AmazonScraper(BaseScraper):
         
         import re
         
+        # 首先处理双逗号问题（如 R$143,,99 -> R$143,99）
+        if 'R$' in price_text and ',,' in price_text:
+            price_text = price_text.replace(',,', ',')
+            logger.info(f"Fixed double comma in price: {price_text}")
+        
+        # 处理巴西亚马逊价格格式问题
+        if 'R$' in price_text and price_text.count(',') > 1:
+            # 如果有多于一个逗号，保留第一个逗号作为千位分隔符，第二个作为小数分隔符
+            parts = price_text.split(',')
+            if len(parts) == 3:  # 如 R$143,99,99
+                price_text = f"{parts[0]},{parts[1]}{parts[2]}"
+                logger.info(f"Fixed multiple commas in BRL price: {price_text}")
+        
         # 匹配各种价格格式
         price_patterns = [
-            r'[€$£¥]\s*\d+\.?\d*',  # 货币符号 + 数字
-            r'\d+\.?\d*\s*[€$£¥]',  # 数字 + 货币符号
-            r'[€$£¥]\d+\.?\d*',     # 货币符号直接连数字
+            r'[€$£¥R\$₹]\s*\d+[,.]?\d*',  # 货币符号 + 数字（支持逗号分隔符）
+            r'\d+[,.]?\d*\s*[€$£¥R\$₹]',  # 数字 + 货币符号（支持逗号分隔符）
+            r'[€$£¥R\$₹]\d+[,.]?\d*',     # 货币符号直接连数字（支持逗号分隔符）
         ]
         
         for i, pattern in enumerate(price_patterns):
@@ -2132,7 +2206,14 @@ class AmazonScraper(BaseScraper):
                 th_text = th.get_text()
                 logger.info(f"Table th {i+1}: {th_text[:100]}...")
                 # 支持多语言的排名关键词
-                rank_keywords = ['Best Sellers Rank', 'Clasificación en los más vendidos de Amazon', 'Clasificación en los más vendidos']
+                rank_keywords = [
+                    'Best Sellers Rank', 
+                    'Clasificación en los más vendidos de Amazon', 
+                    'Clasificación en los más vendidos',
+                    'Classificação dos mais vendidos da Amazon',
+                    'Classificação dos mais vendidos',
+                    'Ranking dos mais vendidos'  # 巴西亚马逊的排名关键词
+                ]
                 if any(keyword in th_text for keyword in rank_keywords):
                     logger.info(f"Found ranking th: {th_text}")
                     td = th.find_next_sibling('td')
@@ -2161,7 +2242,14 @@ class AmazonScraper(BaseScraper):
                     for th in detail_table.select('th.a-color-secondary.a-size-base.prodDetSectionEntry'):
                         th_text = th.get_text()
                         logger.info(f"Checking detailBullets th: {th_text[:100]}...")
-                        if 'Best Sellers Rank' in th_text or 'Amazon Bestseller-Rang' in th_text or 'Bestseller-Rang' in th_text:
+                        if any(keyword in th_text for keyword in [
+                            'Best Sellers Rank', 
+                            'Amazon Bestseller-Rang', 
+                            'Bestseller-Rang',
+                            'Classificação dos mais vendidos da Amazon',
+                            'Classificação dos mais vendidos',
+                            'Ranking dos mais vendidos'  # 巴西亚马逊的排名关键词
+                        ]):
                             logger.info(f"Found Best Sellers Rank th in productDetails: {th_text}")
                             td = th.find_next_sibling('td')
                             if td:
@@ -2328,6 +2416,7 @@ class AmazonScraper(BaseScraper):
                     r'#([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 英文格式（带#）
                     r'([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',   # 英文格式（不带#）
                     r'nº([0-9,]+)\s+en\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 西班牙语格式
+                    r'Nº\s*([0-9,]+)\s+em\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 葡萄牙语格式（Nº 数字 em 类目）
                     r'Nr\.\s*([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 德语格式（Nr. 数字 in 类目）
                     r'Best Sellers Rank:\s*([0-9,]+)\s+in\s+([^<\d]+?)(?:\s*\([^)]*\)\s*|$)',  # 德国格式
                     r'#([0-9,]+)\s+in\s+([^&]+?)(?:\s*\([^)]*\)\s*|$)',  # 印度格式（支持&符号）
@@ -2740,6 +2829,37 @@ class AmazonScraper(BaseScraper):
             if 'FSSAI LICENSE' in fssai_text:
                 return fssai_text
         
+        # 检查是否是巴西亚马逊的卖家页面，专门处理Nome Comercial
+        nome_comercial_element = soup.select_one('.a-box-inner.a-padding-medium .a-row.a-spacing-none span.a-text-bold')
+        if nome_comercial_element:
+            nome_comercial_text = clean_text(nome_comercial_element.get_text())
+            logger.info(f"Found Nome Comercial label in Brazilian seller page: {nome_comercial_text}")
+            if 'Nome Comercial' in nome_comercial_text:
+                # 查找对应的值
+                value_span = nome_comercial_element.find_next_sibling('span')
+                if value_span:
+                    company_name = clean_text(value_span.get_text())
+                    logger.info(f"Found Brazilian company name: {company_name}")
+                    return company_name
+        
+        # 更广泛的巴西亚马逊Nome Comercial搜索
+        if 'amazon.com.br' in str(soup):
+            logger.info("Detected Brazilian Amazon seller page, searching for Nome Comercial...")
+            # 查找所有包含"Nome Comercial"的文本
+            nome_comercial_texts = soup.find_all(text=re.compile(r'Nome Comercial', re.IGNORECASE))
+            logger.info(f"Found {len(nome_comercial_texts)} elements containing 'Nome Comercial'")
+            
+            for text_element in nome_comercial_texts:
+                parent = text_element.parent
+                if parent:
+                    # 查找下一个兄弟元素，通常包含公司名称
+                    next_sibling = parent.find_next_sibling()
+                    if next_sibling:
+                        company_name = clean_text(next_sibling.get_text())
+                        if company_name and len(company_name) > 2:
+                            logger.info(f"Found Brazilian company name from text search: {company_name}")
+                            return company_name
+        
         # 查找"Detailed Seller Information"部分
         detailed_info = {}
         
@@ -2925,7 +3045,14 @@ class AmazonScraper(BaseScraper):
             '[data-a-size="xl"][data-a-color="base"]',
             '.a-price-symbol',
             '.a-price-whole',
-            '.a-price-fraction'
+            '.a-price-fraction',
+            # 巴西亚马逊特定选择器
+            '.a-section.a-spacing-none.aok-align-center .a-price',
+            '.a-section.a-spacing-none.aok-align-center.aok-relative .a-price',
+            '.a-price[data-a-size="xl"]',
+            '.a-price[data-a-color="base"]',
+            '.a-price[data-a-color="price"]',
+            '.a-price[data-a-color="secondary"]'
         ]
         
         # 首先尝试从 aok-offscreen 中提取完整价格（最准确）
@@ -2938,19 +3065,38 @@ class AmazonScraper(BaseScraper):
             price_text = clean_text(offscreen_price.get_text())
             logger.info(f"Offscreen price {i+1}: '{price_text}'")
             
-            if price_text and len(price_text) > 1 and '€' in price_text:
-                logger.info(f"Checking offscreen price: '{price_text}' - Length: {len(price_text)}, Contains €: {'€' in price_text}")
+            # 检查是否包含任何货币符号
+            currency_symbols = ['€', 'R$', '$', '£', '¥', '₹']
+            has_currency = any(symbol in price_text for symbol in currency_symbols)
+            
+            if price_text and len(price_text) > 1 and has_currency:
+                logger.info(f"Checking offscreen price: '{price_text}' - Length: {len(price_text)}, Has currency: {has_currency}")
                 # 检查是否是完整的价格格式（包含数字和货币符号）
                 import re
-                regex_match = re.search(r'€\s*\d+[,.]?\d*|\d+[,.]?\d*\s*€', price_text)
+                # 支持多种货币符号的正则表达式
+                currency_patterns = [
+                    r'€\s*\d+[,.]?\d*|\d+[,.]?\d*\s*€',  # 欧元
+                    r'R\$\s*\d+[,.]?\d*|\d+[,.]?\d*\s*R\$',  # 巴西雷亚尔
+                    r'\$\s*\d+[,.]?\d*|\d+[,.]?\d*\s*\$',  # 美元
+                    r'£\s*\d+[,.]?\d*|\d+[,.]?\d*\s*£',  # 英镑
+                    r'¥\s*\d+[,.]?\d*|\d+[,.]?\d*\s*¥',  # 日元
+                    r'₹\s*\d+[,.]?\d*|\d+[,.]?\d*\s*₹'   # 印度卢比
+                ]
+                
+                regex_match = None
+                for pattern in currency_patterns:
+                    regex_match = re.search(pattern, price_text)
+                    if regex_match:
+                        break
+                
                 logger.info(f"Regex match result: {regex_match}")
                 if regex_match:
-                    logger.info(f"Found valid EUR price in aok-offscreen: {price_text}")
+                    logger.info(f"Found valid price in aok-offscreen: {price_text}")
                     valid_prices.append(price_text)
                 else:
                     logger.info(f"Regex did not match offscreen price: {price_text}")
             else:
-                logger.info(f"Offscreen price conditions not met: '{price_text}' - Length: {len(price_text) if price_text else 0}, Contains €: {'€' in price_text if price_text else False}")
+                logger.info(f"Offscreen price conditions not met: '{price_text}' - Length: {len(price_text) if price_text else 0}, Has currency: {has_currency}")
         
         # 如果有多个有效价格，选择最合适的
         if valid_prices:
@@ -2981,7 +3127,14 @@ class AmazonScraper(BaseScraper):
             '.a-section.a-spacing-none.aok-align-center.aok-relative .a-price',
             '.a-price.aok-align-center.reinventPricePriceToPayMargin.priceToPay',
             '.a-price[data-a-size="xl"][data-a-color="base"]',
-            '.a-price.reinventPricePriceToPayMargin'
+            '.a-price.reinventPricePriceToPayMargin',
+            # 巴西亚马逊特定选择器
+            '.a-price.aok-align-center',
+            '.a-price',
+            '.a-offscreen',
+            '.a-price-whole',
+            '.a-price-symbol',
+            '.a-price-fraction'
         ]
         
         # 首先尝试查找包含折扣信息的价格容器
@@ -3055,18 +3208,38 @@ class AmazonScraper(BaseScraper):
                                     price = f"{whole}{symbol}"
                                 logger.info(f"Found discount EUR price: {price}")
                                 return price
-                            # 处理美元价格格式（$4.27）
-                            elif symbol == '$':
-                                # 清理whole部分，移除多余的点
-                                whole = whole.replace('.', '')
-                                if fraction:
-                                    price = f"{symbol}{whole}.{fraction}"
+                        # 处理美元价格格式（$4.27）
+                        elif symbol == '$':
+                            # 清理whole部分，移除多余的点
+                            whole = whole.replace('.', '')
+                            if fraction:
+                                price = f"{symbol}{whole}.{fraction}"
+                            else:
+                                price = f"{symbol}{whole}"
+                            logger.info(f"Found discount USD price: {price}")
+                            # 清理价格文本
+                            cleaned_price = self._clean_price_text(price)
+                            return cleaned_price
+                        # 处理巴西雷亚尔价格格式（R$143,99）
+                        elif symbol == 'R$':
+                            # 处理巴西雷亚尔价格格式，使用逗号作为小数分隔符
+                            if fraction:
+                                if decimal:
+                                    # 有decimal元素，使用decimal作为分隔符
+                                    price = f"{symbol}{whole}{decimal}{fraction}"
                                 else:
-                                    price = f"{symbol}{whole}"
-                                logger.info(f"Found discount USD price: {price}")
-                                # 清理价格文本
-                                cleaned_price = self._clean_price_text(price)
-                                return cleaned_price
+                                    # 没有decimal元素，添加逗号作为分隔符
+                                    # 检查whole部分是否已经包含逗号
+                                    if ',' in whole:
+                                        # 如果whole已经包含逗号，直接拼接fraction
+                                        price = f"{symbol}{whole}{fraction}"
+                                    else:
+                                        # 如果whole不包含逗号，添加逗号作为分隔符
+                                        price = f"{symbol}{whole},{fraction}"
+                            else:
+                                price = f"{symbol}{whole}"
+                            logger.info(f"Found discount BRL price: {price}")
+                            return price
 
         for selector in current_price_selectors:
             current_price_elements = soup.select(selector)
@@ -3142,6 +3315,26 @@ class AmazonScraper(BaseScraper):
                             # 清理价格文本
                             cleaned_price = self._clean_price_text(price)
                             return cleaned_price
+                        # 处理巴西雷亚尔价格格式（R$143,99）
+                        elif symbol == 'R$':
+                            # 处理巴西雷亚尔价格格式，使用逗号作为小数分隔符
+                            if fraction:
+                                if decimal:
+                                    # 有decimal元素，使用decimal作为分隔符
+                                    price = f"{symbol}{whole}{decimal}{fraction}"
+                                else:
+                                    # 没有decimal元素，添加逗号作为分隔符
+                                    # 检查whole部分是否已经包含逗号
+                                    if ',' in whole:
+                                        # 如果whole已经包含逗号，直接拼接fraction
+                                        price = f"{symbol}{whole}{fraction}"
+                                    else:
+                                        # 如果whole不包含逗号，添加逗号作为分隔符
+                                        price = f"{symbol}{whole},{fraction}"
+                            else:
+                                price = f"{symbol}{whole}"
+                            logger.info(f"Found BRL price from selector {selector}: {price}")
+                            return price
                         # 处理印度卢比价格格式（₹30,989.00）
                         elif symbol == '₹':
                             # 处理印度卢比价格格式
@@ -3256,6 +3449,26 @@ class AmazonScraper(BaseScraper):
                     # 清理价格文本
                     cleaned_price = self._clean_price_text(price)
                     return cleaned_price
+                # 处理巴西雷亚尔价格格式（R$143,99）
+                elif symbol == 'R$':
+                    # 处理巴西雷亚尔价格格式，使用逗号作为小数分隔符
+                    if fraction:
+                        if decimal:
+                            # 有decimal元素，使用decimal作为分隔符
+                            price = f"{symbol}{whole}{decimal}{fraction}"
+                        else:
+                            # 没有decimal元素，添加逗号作为分隔符
+                            # 检查whole部分是否已经包含逗号
+                            if ',' in whole:
+                                # 如果whole已经包含逗号，直接拼接fraction
+                                price = f"{symbol}{whole}{fraction}"
+                            else:
+                                # 如果whole不包含逗号，添加逗号作为分隔符
+                                price = f"{symbol}{whole},{fraction}"
+                    else:
+                        price = f"{symbol}{whole}"
+                    logger.info(f"Found BRL price from components: {price}")
+                    return price
                 else:
                     # 其他货币
                     if fraction:
@@ -3300,7 +3513,7 @@ class AmazonScraper(BaseScraper):
         for i, offscreen_price in enumerate(offscreen_prices):
             price_text = clean_text(offscreen_price.get_text())
             logger.info(f"Checking offscreen price {i+1}: '{price_text}'")
-            if price_text and any(currency in price_text for currency in ['$', '€', '£', '¥', 'CNY']):
+            if price_text and any(currency in price_text for currency in ['$', '€', '£', '¥', 'CNY', 'R$', '₹']):
                 logger.info(f"Found price from offscreen: {price_text}")
                 logger.info(f"Offscreen price HTML: {str(offscreen_price)}")
                 # 清理价格文本
@@ -3313,7 +3526,7 @@ class AmazonScraper(BaseScraper):
             elements = soup.select(selector)
             for element in elements:
                 text = clean_text(element.get_text())
-                if text and ('$' in text or '€' in text or '£' in text or '¥' in text):
+                if text and ('$' in text or '€' in text or '£' in text or '¥' in text or 'R$' in text or '₹' in text):
                     # 过滤掉只包含符号的文本
                     if len(text) > 1:
                         logger.info(f"Found price with selector {selector}: {text}")
