@@ -3,7 +3,7 @@
 """
 import re
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from bs4 import BeautifulSoup
 from app.scrapers.base import BaseScraper
 from app.utils.helpers import (
@@ -2106,6 +2106,24 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Row {i}: first_td_text '{first_td_text}' != 'Marke'")
             else:
                 logger.info(f"Row {i}: no first_td with class 'a-span3'")
+
+        # 方法3：detailBullets_feature_div（US常见）提取 Brand 或 Manufacturer
+        detail_div = soup.select_one('#detailBullets_feature_div')
+        if detail_div:
+            li_elements = detail_div.select('li')
+            logger.info(f"Found {len(li_elements)} li elements for brand in detailBullets_feature_div")
+            for li in li_elements:
+                bold = li.select_one('span.a-text-bold')
+                if not bold:
+                    continue
+                label = clean_text(bold.get_text()).lower()
+                value_span = bold.find_next_sibling('span')
+                value = clean_text(value_span.get_text()) if value_span else None
+                if not value:
+                    continue
+                if 'brand' in label:
+                    logger.info(f"Found brand from detail bullets: {value}")
+                    return value
         
         # 方法3：查找其他可能的品牌选择器
         brand_text = self._extract_text_by_selectors(soup, [
@@ -2197,6 +2215,21 @@ class AmazonScraper(BaseScraper):
         try:
             # 查找Best Sellers Rank的li元素 - 使用更通用的方法
             rank_li = None
+            rank_ul = None
+
+            # 优先：detailBullets_feature_div 中的 Best Sellers Rank（US场景）
+            detail_div = soup.select_one('#detailBullets_feature_div')
+            if detail_div and not rank_li:
+                for li in detail_div.select('li'):
+                    text = li.get_text()
+                    if 'Best Sellers Rank' in text and '#' in text and ' in ' in text:
+                        rank_li = li
+                        # 可能包含子类目 ul
+                        inner_ul = li.select_one('ul.a-unordered-list')
+                        if inner_ul:
+                            rank_ul = inner_ul
+                        logger.info("Found Best Sellers Rank in detailBullets_feature_div")
+                        break
             
             # 方法1：优先查找表格形式的Best Sellers Rank
             logger.info("Searching for table-form Best Sellers Rank...")
@@ -2689,6 +2722,21 @@ class AmazonScraper(BaseScraper):
     
     def _extract_listing_date(self, soup: BeautifulSoup) -> Optional[str]:
         """提取上架时间"""
+        # 先尝试 detailBullets_feature_div（US最常见且最可靠）
+        detail_div = soup.select_one('#detailBullets_feature_div')
+        if detail_div:
+            for li in detail_div.select('li'):
+                bold = li.select_one('span.a-text-bold')
+                if not bold:
+                    continue
+                label = clean_text(bold.get_text()).lower()
+                if 'date first available' in label:
+                    sibling_span = bold.find_next_sibling('span')
+                    if sibling_span:
+                        date_text = self._clean_date_format(clean_text(sibling_span.get_text()))
+                        if date_text:
+                            logger.info(f"Found listing date in detailBullets: {date_text}")
+                            return date_text
         # 方法1：在表格中查找上架时间（多语言支持）
         for th in soup.select('th.a-color-secondary.a-size-base.prodDetSectionEntry'):
             if self._is_listing_date_text(th.get_text()):
@@ -2731,8 +2779,8 @@ class AmazonScraper(BaseScraper):
                         logger.info(f"Found listing date in productDetails table: {date_text}")
                         return date_text
         
-        # 方法4：在detailBullets_feature_div中查找（多语言支持）
-        detail_div = soup.select_one('#detailBullets_feature_div')
+        # 方法4：在detailBullets_feature_div中查找（多语言支持，正则兜底）
+        detail_div = detail_div or soup.select_one('#detailBullets_feature_div')
         logger.info(f"Found detailBullets_feature_div: {detail_div is not None}")
         if detail_div:
             li_elements = detail_div.select('li')
@@ -2863,6 +2911,78 @@ class AmazonScraper(BaseScraper):
         # 查找"Detailed Seller Information"部分
         detailed_info = {}
         
+        # 优先处理亚马逊标准"Detailed Seller Information"结构（只返回Business Name + Business Address）
+        detailed_container = soup.select_one('.a-box-inner.a-padding-medium')
+        if detailed_container and 'Detailed Seller Information' in detailed_container.get_text():
+            logger.info("Processing Detailed Seller Information container")
+
+            def _is_noise(text: str) -> bool:
+                tl = text.lower()
+                return any(keyword in tl for keyword in [
+                    'share your thoughts',
+                    'leave seller feedback',
+                    'message from amazon',
+                    'privacy and security',
+                    'contact seller',
+                    'have a question',
+                    'gift wrap',
+                    'gift messaging',
+                    'privacy policy'
+                ])
+
+            lines: List[str] = []
+            processed_indent = set()
+
+            rows = detailed_container.select('div.a-row')
+            for row in rows:
+                if row in processed_indent:
+                    continue
+
+                # 跳过标题或空行
+                row_text = clean_text(row.get_text())
+                if not row_text or 'detailed seller information' in row_text.lower():
+                    continue
+
+                classes = row.get('class', [])
+                if 'indent-left' in classes:
+                    span = row.find('span')
+                    if span:
+                        text = clean_text(span.get_text())
+                        if text and not _is_noise(text):
+                            lines.append(text)
+                    continue
+
+                bold_span = row.select_one('span.a-text-bold')
+                if bold_span:
+                    label_raw = clean_text(bold_span.get_text())
+                    if _is_noise(label_raw):
+                        continue
+                    label = label_raw.rstrip(':')
+                    value_span = bold_span.find_next_sibling('span')
+                    value = clean_text(value_span.get_text()) if value_span else None
+
+                    if value and not _is_noise(value):
+                        lines.append(f"{label}: {value}")
+                    elif not value:
+                        # 对于没有直接值的标签（如 Business Address）保留标签行
+                        lines.append(f"{label}:")
+
+                    if 'business address' in label_raw.lower():
+                        indent_rows = row.find_next_siblings('div', class_='a-row a-spacing-none indent-left')
+                        for indent in indent_rows:
+                            processed_indent.add(indent)
+                            span = indent.find('span')
+                            if span:
+                                text = clean_text(span.get_text())
+                                if text and not _is_noise(text):
+                                    lines.append(text)
+
+            cleaned_lines = [line for line in lines if line and not _is_noise(line)]
+            if cleaned_lines:
+                result = '\n'.join(cleaned_lines)
+                logger.info(f"Returning structured seller info: {result}")
+                return result
+
         # 首先尝试查找包含详细卖家信息的容器（支持多种结构）
         seller_info_containers = soup.select('div.a-box-inner.a-padding-medium, div.a-section.a-spacing-medium, div.a-section.a-spacing-small')
         logger.info(f"Found {len(seller_info_containers)} seller info containers")
@@ -3026,6 +3146,52 @@ class AmazonScraper(BaseScraper):
     def _extract_price(self, soup: BeautifulSoup) -> Optional[str]:
         """提取产品价格"""
         logger.info("Searching for product price...")
+        import re
+
+        # 优先在核心价格容器内查找（更稳定）
+        core_price_containers = [
+            '#corePrice_feature_div',
+            '#corePriceDisplay_desktop_feature_div',
+            '.apexPriceToPay'
+        ]
+
+        def _assemble_price_from_node(node) -> Optional[str]:
+            if not node:
+                return None
+            sym = node.select_one('.a-price-symbol')
+            whole = node.select_one('.a-price-whole')
+            frac = node.select_one('.a-price-fraction')
+            if sym and whole:
+                s = clean_text(sym.get_text()) or ''
+                w = (clean_text(whole.get_text()) or '').replace('.', '')
+                f = clean_text(frac.get_text()) if frac else ''
+                return f"{s}{w}.{f}" if f else f"{s}{w}"
+            return None
+
+        def _is_valid_offscreen(text: str) -> bool:
+            if not text:
+                return False
+            tl = text.lower().strip()
+            if 'per ' in tl or 'percent savings' in tl or 'savings' in tl:
+                return False
+            return bool(re.match(r'^\$\s?\d[\d,]*(?:\.\d{2})?$', text.strip()))
+
+        for container_sel in core_price_containers:
+            container = soup.select_one(container_sel)
+            if not container:
+                continue
+            # 1) 价格组件
+            node = container.select_one('.a-price.aok-align-center.reinventPricePriceToPayMargin.priceToPay')
+            price = _assemble_price_from_node(node)
+            if price and price.startswith('$'):
+                logger.info(f"Found price inside {container_sel}: {price}")
+                return price
+            # 2) 容器内的离屏价格
+            for off in container.select('.aok-offscreen, .a-offscreen'):
+                txt = clean_text(off.get_text()) or ''
+                if _is_valid_offscreen(txt):
+                    logger.info(f"Found offscreen price inside {container_sel}: {txt}")
+                    return txt
         
         # 存储找到的非美元价格
         non_usd_price = None
@@ -3055,8 +3221,8 @@ class AmazonScraper(BaseScraper):
             '.a-price[data-a-color="secondary"]'
         ]
         
-        # 首先尝试从 aok-offscreen 中提取完整价格（最准确）
-        offscreen_prices = soup.select('.aok-offscreen')
+        # 首先尝试从 aok-offscreen 中提取完整价格（过滤单位价/折扣）
+        offscreen_prices = soup.select('.aok-offscreen, .a-offscreen')
         logger.info(f"Found {len(offscreen_prices)} offscreen price elements")
         
         # 收集所有有效的价格
@@ -3090,7 +3256,7 @@ class AmazonScraper(BaseScraper):
                         break
                 
                 logger.info(f"Regex match result: {regex_match}")
-                if regex_match:
+                if regex_match and _is_valid_offscreen(price_text):
                     logger.info(f"Found valid price in aok-offscreen: {price_text}")
                     valid_prices.append(price_text)
                 else:
@@ -3114,8 +3280,8 @@ class AmazonScraper(BaseScraper):
                     logger.info(f"Selected price with comma (European format): {price}")
                     return price
             
-            # 最后返回第一个
-            logger.info(f"Selected first valid price: {valid_prices[0]}")
+            # 最后返回第一个（文档顺序）
+            logger.info(f"Selected first valid price (by order): {valid_prices[0]}")
             return valid_prices[0]
         
         # 然后尝试从当前价格（突出显示的价格）中提取
